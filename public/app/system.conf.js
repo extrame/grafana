@@ -4,6 +4,7 @@ System.config({
   paths: {
     'virtual-scroll': 'vendor/npm/virtual-scroll/src/index.js',
     'mousetrap': 'vendor/npm/mousetrap/mousetrap.js',
+    'echarts': 'vendor/npm/echarts/dist/echarts.js',
     'remarkable': 'vendor/npm/remarkable/dist/remarkable.js',
     'tether': 'vendor/npm/tether/dist/js/tether.js',
     'eventemitter3': 'vendor/npm/eventemitter3/index.js',

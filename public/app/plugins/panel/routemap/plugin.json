@@ -1,0 +1,15 @@
+{
+  "type": "panel",
+  "name": "Route Map",
+  "id": "routemap",
+  "info": {
+    "author": {
+      "name": "Rongshu Tech",
+      "url": "http://rongshu.tech"
+    },
+    "logos": {
+      "small": "img/icn-routemap-panel.svg",
+      "large": "img/icn-routemap-panel.svg"
+    }
+  }
+}

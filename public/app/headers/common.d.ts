@@ -23,6 +23,11 @@ declare module 'angular' {
   export default angular;
 }
 
+declare module 'echarts' {
+  var echarts: any;
+  export default echarts
+}
+
 declare module 'jquery' {
   var jquery: any;
   export default jquery;

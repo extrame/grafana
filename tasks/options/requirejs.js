@@ -1,16 +1,15 @@
-module.exports = function(config,grunt) {
+module.exports = function(config, grunt) {
   'use strict';
 
   function buildRequireJsOptions() {
-
     var options = {
       appDir: '<%= genDir %>',
-      dir:  '<%= tempDir %>',
+      dir: '<%= tempDir %>',
       mainConfigFile: '<%= genDir %>/app/require_config.js',
       baseUrl: './',
       waitSeconds: 0,
 
-      modules: [], // populated below,
+      modules: [],  // populated below,
 
       optimize: 'none',
       optimizeCss: 'none',
@@ -22,13 +21,14 @@ module.exports = function(config,grunt) {
       inlineText: true,
       skipPragmas: true,
 
-      done: function (done, output) {
+      done: function(done, output) {
         var duplicates = require('rjs-build-analysis').duplicates(output);
 
         if (duplicates.length > 0) {
           grunt.log.subhead('Duplicates found in requirejs build:');
           grunt.log.warn(duplicates);
-          done(new Error('r.js built duplicate modules, please check the excludes option.'));
+          done(new Error(
+              'r.js built duplicate modules, please check the excludes option.'));
         }
 
         done();
@@ -44,6 +44,7 @@ module.exports = function(config,grunt) {
           'text',
           'jquery',
           'bootstrap',
+          'echarts',
           'modernizr',
           'timepicker',
           'datepicker',
@@ -65,12 +66,13 @@ module.exports = function(config,grunt) {
     var panelPath = config.srcDir + '/app/plugins/panel';
 
     // create a module for each directory in public/app/panel/
-    fs.readdirSync(panelPath).forEach(function (panelName) {
-      requireModules[0].include.push('app/plugins/panel/'+panelName+'/module');
+    fs.readdirSync(panelPath).forEach(function(panelName) {
+      requireModules[0].include.push('app/plugins/panel/' + panelName +
+                                     '/module');
     });
 
-    return { options: options };
+    return {options: options};
   }
 
-  return { build: buildRequireJsOptions() };
+  return {build: buildRequireJsOptions()};
 };

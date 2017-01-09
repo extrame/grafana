@@ -1,0 +1,17 @@
+<div class="editor-row">
+    <div class="section gf-form-group">
+        <h5 class="section-heading">
+            Map Scope
+        </h5>
+
+        <gf-form-switch class="gf-form" label="Show" label-class="width-5" checked="ctrl.panel.xaxis.show" on-change="ctrl.render()"></gf-form-switch>
+
+        <div class="gf-form">
+            <label class="gf-form-label width-5">Map Scope</label>
+            <div class="gf-form-select-wrapper max-width-20">
+                <select class="gf-form-input" ng-model="ctrl.panel.scopeSelected" ng-options="scope.scope as scope.scope group by scope.area for scope in ctrl.scope" ng-change="ctrl.render()"> </select>
+            </div>
+        </div>
+
+    </div>
+</div>

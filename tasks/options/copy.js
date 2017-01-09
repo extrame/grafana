@@ -20,6 +20,7 @@ module.exports = function(config) {
       expand: true,
       src: [
         'eventemitter3/*.js',
+        'echarts/dist/**/*',
         'systemjs/dist/*.js',
         'es6-promise/**/*',
         'es6-shim/*.js',
