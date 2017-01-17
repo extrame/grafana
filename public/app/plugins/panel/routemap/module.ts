@@ -9,6 +9,7 @@ import kbn from 'app/core/utils/kbn';
 import config from 'app/core/config';
 import TimeSeries from 'app/core/time_series2';
 import {MetricsPanelCtrl} from 'app/plugins/sdk';
+import {ChineseGeoCoords} from './china_cities';
 
 class RouteMapCtrl extends MetricsPanelCtrl {
   static templateUrl = 'module.html';
@@ -41,52 +42,8 @@ class RouteMapCtrl extends MetricsPanelCtrl {
     {scope: "jiangsu", area: "china"},
   ];
   // Set and populate defaults
-  panelDefaults = {
-    scopeSelected: "china",
-    links: [],
-    datasource: null,
-    maxDataPoints: 100,
-    interval: null,
-    targets: [{}],
-    cacheTimeout: null,
-    format: 'none',
-    prefix: '',
-    postfix: '',
-    nullText: null,
-    valueMaps: [{value: 'null', op: '=', text: 'N/A'}],
-    mappingTypes: [
-      {name: 'value to text', value: 1},
-      {name: 'range to text', value: 2},
-    ],
-    rangeMaps: [{from: 'null', to: 'null', text: 'N/A'}],
-    mappingType: 1,
-    nullPointMode: 'connected',
-    valueName: 'avg',
-    prefixFontSize: '50%',
-    valueFontSize: '80%',
-    postfixFontSize: '50%',
-    thresholds: '',
-    colorBackground: false,
-    colorValue: false,
-    colors: [
-      "rgba(245, 54, 54, 0.9)",
-      "rgba(237, 129, 40, 0.89)",
-      "rgba(50, 172, 45, 0.97)"
-    ],
-    sparkline: {
-      show: false,
-      full: false,
-      lineColor: 'rgb(31, 120, 193)',
-      fillColor: 'rgba(31, 118, 189, 0.18)',
-    },
-    gauge: {
-      show: false,
-      minValue: 0,
-      maxValue: 100,
-      thresholdMarkers: true,
-      thresholdLabels: false
-    }
-  };
+  panelDefaults =
+      {mapType: "line", scopeSelected: "china", from: 'from', to: 'to',links: [],color: '#a6c84c'};
 
   /** @ngInject */
   constructor($scope, $injector, private $location, private linkSrv) {
@@ -130,12 +87,46 @@ class RouteMapCtrl extends MetricsPanelCtrl {
 
   onDataReceived(dataList) {
     this.series = dataList.map(this.seriesHandler.bind(this));
-
-    var data: any = {};
-    this.setValues(data);
-
-    this.data = data;
     this.render();
+  }
+
+  getCoords(name) {
+    for (var i = ChineseGeoCoords.length; i > 0; i--) {
+      var feature = ChineseGeoCoords[i - 1];
+      if (feature.name === name) {
+        return feature.cp;
+      }
+    }
+  }
+
+  // geo {from: beijing, to: hangzhou}
+  parseAliasAsLocationPair(alias) {
+    var patt1 = /(\w+)\s*:\s*'*([^,\s}]+)'*/g;
+    var res = {coords: [], name: ""};
+    var result = patt1.exec(alias);
+    var coord = [];
+    while (result != null) {
+      var loc = undefined;
+      if (result[1] === this.panel.from) {
+        res['from'] = result[2];
+        loc = this.getCoords(res["from"]);
+      } else if (result[1] === this.panel.to) {
+        res['to'] = result[2];
+        loc = this.getCoords(res["to"]);
+      } else if (result[1] === this.panel.at) {
+        res['at'] = result[2];
+        loc = this.getCoords(res["at"]);
+      }
+      if (loc !== undefined){
+        coord.push(loc);
+      }
+      var result = patt1.exec(alias);
+    }
+    if (coord.length === 2) {
+      res.coords = coord;
+      res.name = alias;
+      return res;
+    }
   }
 
   seriesHandler(seriesData) {
@@ -146,32 +137,6 @@ class RouteMapCtrl extends MetricsPanelCtrl {
 
     series.flotpairs = series.getFlotPairs(this.panel.nullPointMode);
     return series;
-  }
-
-  setColoring(options) {
-    if (options.background) {
-      this.panel.colorValue = false;
-      this.panel.colors = [
-        'rgba(71, 212, 59, 0.4)',
-        'rgba(245, 150, 40, 0.73)',
-        'rgba(225, 40, 40, 0.59)'
-      ];
-    } else {
-      this.panel.colorBackground = false;
-      this.panel.colors = [
-        'rgba(50, 172, 45, 0.97)',
-        'rgba(237, 129, 40, 0.89)',
-        'rgba(245, 54, 54, 0.9)'
-      ];
-    }
-    this.render();
-  }
-
-  invertColorOrder() {
-    var tmp = this.panel.colors[0];
-    this.panel.colors[0] = this.panel.colors[2];
-    this.panel.colors[2] = tmp;
-    this.render();
   }
 
   getDecimalsForValue(value) {
@@ -216,94 +181,6 @@ class RouteMapCtrl extends MetricsPanelCtrl {
     return result;
   }
 
-  setValues(data) {
-    data.flotpairs = [];
-
-    if (this.series.length > 1) {
-      var error: any = new Error();
-      error.message = 'Multiple Series Error';
-      error.data =
-          'Metric query returns ' + this.series.length +
-          ' series. Single Stat Panel expects a single series.\n\nResponse:\n' +
-          JSON.stringify(this.series);
-      throw error;
-    }
-
-    if (this.series && this.series.length > 0) {
-      var lastPoint = _.last(this.series[0].datapoints);
-      var lastValue = _.isArray(lastPoint) ? lastPoint[0] : null;
-
-      if (this.panel.valueName === 'name') {
-        data.value = 0;
-        data.valueRounded = 0;
-        data.valueFormated = this.series[0].alias;
-      } else if (_.isString(lastValue)) {
-        data.value = 0;
-        data.valueFormated = _.escape(lastValue);
-        data.valueRounded = 0;
-      } else {
-        data.value = this.series[0].stats[this.panel.valueName];
-        data.flotpairs = this.series[0].flotpairs;
-
-        var decimalInfo = this.getDecimalsForValue(data.value);
-        var formatFunc = kbn.valueFormats[this.panel.format];
-        data.valueFormated = formatFunc(data.value, decimalInfo.decimals,
-                                        decimalInfo.scaledDecimals);
-        data.valueRounded = kbn.roundValue(data.value, decimalInfo.decimals);
-      }
-
-      // Add $__name variable for using in prefix or postfix
-      data.scopedVars = _.extend({}, this.panel.scopedVars);
-      data.scopedVars["__name"] = {value: this.series[0].label};
-    }
-
-    // check value to text mappings if its enabled
-    if (this.panel.mappingType === 1) {
-      for (var i = 0; i < this.panel.valueMaps.length; i++) {
-        var map = this.panel.valueMaps[i];
-        // special null case
-        if (map.value === 'null') {
-          if (data.value === null || data.value === void 0) {
-            data.valueFormated = map.text;
-            return;
-          }
-          continue;
-        }
-
-        // value/number to text mapping
-        var value = parseFloat(map.value);
-        if (value === data.valueRounded) {
-          data.valueFormated = map.text;
-          return;
-        }
-      }
-    } else if (this.panel.mappingType === 2) {
-      for (var i = 0; i < this.panel.rangeMaps.length; i++) {
-        var map = this.panel.rangeMaps[i];
-        // special null case
-        if (map.from === 'null' && map.to === 'null') {
-          if (data.value === null || data.value === void 0) {
-            data.valueFormated = map.text;
-            return;
-          }
-          continue;
-        }
-
-        // value/number to range mapping
-        var from = parseFloat(map.from);
-        var to = parseFloat(map.to);
-        if (to >= data.valueRounded && from <= data.valueRounded) {
-          data.valueFormated = map.text;
-          return;
-        }
-      }
-    }
-
-    if (data.value === null || data.value === void 0) {
-      data.valueFormated = "no value";
-    }
-  };
-
   removeValueMap(map) {
     var index = _.indexOf(this.panel.valueMaps, map);
     this.panel.valueMaps.splice(index, 1);
@@ -339,17 +216,125 @@ class RouteMapCtrl extends MetricsPanelCtrl {
         $.get('public/app/plugins/panel/routemap/map/json/' +
                   ctrl.panel.scopeSelected + '.json',
               function(geoJson) {
+                ctrl.panel.geo = geoJson;
                 echarts.registerMap(ctrl.panel.scopeSelected, geoJson);
                 ctrl.chart = echarts.init(mapContainer[0]);
                 ctrl.chart.setOption(
                     {series: [{type: 'map', map: ctrl.panel.scopeSelected}]});
                 ctrl.scopeRendered = ctrl.panel.scopeSelected;
+                renderData(ctrl.series,ctrl.panel.color);
               });
       } else {
         ctrl.chart.resize();
+        renderData(ctrl.series,ctrl.panel.color);
       }
 
       // if (!ctrl.data) return;
+    }
+
+    function renderData(data,color) {
+      var maxSpotRadius = 10;
+      var maxValue = 10;
+      var series = [{
+        type: 'lines',
+        zlevel: 1,
+        data: [],
+        effect: {
+          show: true,
+          period: 6,
+          trailLength: 0.7,
+          color: '#fff',
+          symbolSize: 3
+        },
+        lineStyle: {
+          normal: {
+              color: color,
+              width: 0,
+              curveness: 0.2
+          }
+        },
+      },
+      {
+        data: [],
+        type: 'lines',
+        zlevel: 2,
+        symbol: ['none', 'arrow'],
+        symbolSize: 10,
+        effect: {
+          show: true,
+          period: 6,
+          trailLength: 0,
+          symbolSize: 1
+        },
+        lineStyle: {
+          normal: {
+              color: color,
+              width: 1,
+              opacity: 0.6,
+              curveness: 0.2
+          }
+        },
+      },
+      {
+        data: [],
+        type: 'effectScatter',
+        coordinateSystem: 'geo',
+        zlevel: 2,
+        rippleEffect: {
+            brushType: 'stroke'
+        },
+        label: {
+          normal: {
+            show: true,
+            position: 'right',
+            formatter: '{b}'
+          }
+        },
+        symbolSize: function (val) {
+          return val[2] / maxValue * maxSpotRadius;
+        },
+        itemStyle: {
+          normal: {
+              color: color
+          }
+        },
+      }];
+      if (data !== undefined) {
+        if (ctrl.panel.mapType === "line") {
+          series["type"] = "lines";
+          for (var i = data.length; i > 0; i--) {
+            var line = ctrl.parseAliasAsLocationPair(data[i - 1].alias);
+            if (line !== undefined) {
+              var spot = line.coords[1].concat(data[i - 1].datapoints[0][0]);
+              maxValue = maxValue < data[i - 1].datapoints[0][0]?data[i - 1].datapoints[0][0]: maxValue;
+              series[0].data.push(line);
+              series[1].data.push(line);
+              series[2].data.push({
+                name: data[i - 1].alias,
+                value: spot
+              });
+            }
+          }
+        }
+      }
+      if (series[0].data.length > 0){
+        ctrl.chart.setOption({
+          // backgroundColor: '#404a59',
+          geo: {
+            map: ctrl.scopeRendered,
+            itemStyle: {
+              normal: {
+                  areaColor: '#323c48',
+                  borderColor: '#404a59'
+              },
+              emphasis: {
+                  areaColor: '#2a333d'
+              }
+            }
+          },
+          series: series
+        },true);
+      }
     }
   }
 }

@@ -4,14 +4,34 @@
             Map Scope
         </h5>
 
-        <gf-form-switch class="gf-form" label="Show" label-class="width-5" checked="ctrl.panel.xaxis.show" on-change="ctrl.render()"></gf-form-switch>
-
         <div class="gf-form">
-            <label class="gf-form-label width-5">Map Scope</label>
-            <div class="gf-form-select-wrapper max-width-20">
+            <div class="gf-form-select-wrapper">
                 <select class="gf-form-input" ng-model="ctrl.panel.scopeSelected" ng-options="scope.scope as scope.scope group by scope.area for scope in ctrl.scope" ng-change="ctrl.render()"> </select>
             </div>
         </div>
-
+    </div>
+    <div class="section gf-form-group">
+        <h5 class="section-heading">Map Type</h5>
+        <div class="gf-form">
+            <div class="gf-form-select-wrapper">
+                <select class="gf-form-input" ng-model="ctrl.panel.mapType" ng-options="v as v for (k,v) in ['line','spot']"></select>
+            </div>
+        </div>
+        <div class="gf-form" ng-show="ctrl.panel.mapType=='line'">
+            <span class="gf-form-label width-9">Value Name</span>
+            <input class="gf-form-input max-width-5" type="text" ng-model="ctrl.panel.valueName" ng-model-onblur ng-change="ctrl.refresh()">
+        </div>
+        <div class="gf-form" ng-show="ctrl.panel.mapType=='line'">
+            <span class="gf-form-label width-9">From</span>
+            <input class="gf-form-input max-width-5" type="text" ng-model="ctrl.panel.from" ng-model-onblur ng-change="ctrl.refresh()">
+        </div>
+        <div class="gf-form" ng-show="ctrl.panel.mapType=='line'">
+            <span class="gf-form-label width-9">To</span>
+            <input class="gf-form-input max-width-5" type="text" ng-model="ctrl.panel.to" ng-model-onblur ng-change="ctrl.refresh()">
+        </div>
+        <div class="gf-form" ng-show="ctrl.panel.mapType=='spot'">
+            <span class="gf-form-label width-9">At</span>
+            <input class="gf-form-input max-width-5" type="text" ng-model="ctrl.panel.from" ng-model-onblur ng-change="ctrl.refresh()">
+        </div>
     </div>
 </div>
