@@ -42,8 +42,15 @@ class RouteMapCtrl extends MetricsPanelCtrl {
     {scope: "jiangsu", area: "china"},
   ];
   // Set and populate defaults
-  panelDefaults =
-      {mapType: "line", scopeSelected: "china", from: 'from', to: 'to',links: [],color: '#a6c84c'};
+  panelDefaults = {
+    mapType: "line",
+    scopeSelected: "china",
+    from: 'from',
+    to: 'to',
+    links: [],
+    color: '#a6c84c',
+    spot: {showAtStart: false, showAtStop: true}
+  };
 
   /** @ngInject */
   constructor($scope, $injector, private $location, private linkSrv) {
@@ -117,7 +124,7 @@ class RouteMapCtrl extends MetricsPanelCtrl {
         res['at'] = result[2];
         loc = this.getCoords(res["at"]);
       }
-      if (loc !== undefined){
+      if (loc !== undefined) {
         coord.push(loc);
       }
       var result = patt1.exec(alias);
@@ -222,118 +229,99 @@ class RouteMapCtrl extends MetricsPanelCtrl {
                 ctrl.chart.setOption(
                     {series: [{type: 'map', map: ctrl.panel.scopeSelected}]});
                 ctrl.scopeRendered = ctrl.panel.scopeSelected;
-                renderData(ctrl.series,ctrl.panel.color);
+                renderData(ctrl.series, ctrl.panel.color);
               });
       } else {
         ctrl.chart.resize();
-        renderData(ctrl.series,ctrl.panel.color);
+        renderData(ctrl.series, ctrl.panel.color);
       }
 
       // if (!ctrl.data) return;
     }
 
-    function renderData(data,color) {
+    function renderData(data, color) {
       var maxSpotRadius = 10;
       var maxValue = 10;
-      var series = [{
-        type: 'lines',
-        zlevel: 1,
-        data: [],
-        effect: {
-          show: true,
-          period: 6,
-          trailLength: 0.7,
-          color: '#fff',
-          symbolSize: 3
-        },
-        lineStyle: {
-          normal: {
-              color: color,
-              width: 0,
-              curveness: 0.2
-          }
-        },
-      },
-      {
-        data: [],
-        type: 'lines',
-        zlevel: 2,
-        symbol: ['none', 'arrow'],
-        symbolSize: 10,
-        effect: {
-          show: true,
-          period: 6,
-          trailLength: 0,
-          symbolSize: 1
-        },
-        lineStyle: {
-          normal: {
-              color: color,
-              width: 1,
-              opacity: 0.6,
-              curveness: 0.2
-          }
-        },
-      },
-      {
-        data: [],
-        type: 'effectScatter',
-        coordinateSystem: 'geo',
-        zlevel: 2,
-        rippleEffect: {
-            brushType: 'stroke'
-        },
-        label: {
-          normal: {
+      var series = [
+        {
+          type: 'lines',
+          zlevel: 1,
+          data: [],
+          effect: {
             show: true,
-            position: 'right',
-            formatter: '{b}'
-          }
+            period: 6,
+            trailLength: 0.7,
+            color: '#fff',
+            symbolSize: 3
+          },
+          lineStyle: {normal: {color: color, width: 0, curveness: 0.2}},
         },
-        symbolSize: function (val) {
-          return val[2] / maxValue * maxSpotRadius;
+        {
+          data: [],
+          type: 'lines',
+          zlevel: 2,
+          symbol: ['none', 'arrow'],
+          symbolSize: 10,
+          effect: {show: true, period: 6, trailLength: 0, symbolSize: 1},
+          lineStyle:
+              {normal: {color: color, width: 1, opacity: 0.6, curveness: 0.2}},
         },
-        itemStyle: {
-          normal: {
-              color: color
-          }
-        },
-      }];
+        {
+          data: [],
+          type: 'effectScatter',
+          coordinateSystem: 'geo',
+          zlevel: 2,
+          rippleEffect: {brushType: 'stroke'},
+          label: {normal: {show: false, position: 'right', formatter: '{b}'}},
+          symbolSize: function(val) {
+            return val[2] / maxValue * maxSpotRadius;
+          },
+          itemStyle: {normal: {color: color}},
+        }
+      ];
       if (data !== undefined) {
         if (ctrl.panel.mapType === "line") {
           series["type"] = "lines";
           for (var i = data.length; i > 0; i--) {
             var line = ctrl.parseAliasAsLocationPair(data[i - 1].alias);
             if (line !== undefined) {
-              var spot = line.coords[1].concat(data[i - 1].datapoints[0][0]);
-              maxValue = maxValue < data[i - 1].datapoints[0][0]?data[i - 1].datapoints[0][0]: maxValue;
+              maxValue = maxValue < data[i - 1].datapoints[0][0] ?
+                             data[i - 1].datapoints[0][0] :
+                             maxValue;
               series[0].data.push(line);
               series[1].data.push(line);
-              series[2].data.push({
-                name: data[i - 1].alias,
-                value: spot
-              });
+              if (ctrl.panel.spot.showAtStart) {
+                series[2].data.push({
+                  name: data[i - 1].alias,
+                  value: line.coords[0].concat(data[i - 1].datapoints[0][0])
+                });
+              }
+              if (ctrl.panel.spot.showAtStop) {
+                series[2].data.push({
+                  name: data[i - 1].alias,
+                  value: line.coords[1].concat(data[i - 1].datapoints[0][0])
+                });
+              }
             }
           }
         }
       }
-      if (series[0].data.length > 0){
-        ctrl.chart.setOption({
-          // backgroundColor: '#404a59',
-          geo: {
-            map: ctrl.scopeRendered,
-            itemStyle: {
-              normal: {
-                  areaColor: '#323c48',
-                  borderColor: '#404a59'
+      if (series[0].data.length > 0) {
+        ctrl.chart.setOption(
+            {
+              // backgroundColor: '#404a59',
+              tooltip: {trigger: 'item'},
+              geo: {
+                label: {emphasis: {show: false}},
+                map: ctrl.scopeRendered,
+                itemStyle: {
+                  normal: {areaColor: '#323c48', borderColor: '#404a59'},
+                  emphasis: {areaColor: '#2a333d'}
+                }
               },
-              emphasis: {
-                  areaColor: '#2a333d'
-              }
-            }
-          },
-          series: series
-        },true);
+              series: series
+            },
+            true);
       }
     }
   }

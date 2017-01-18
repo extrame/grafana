@@ -7,6 +7,10 @@
 [Slack](http://slack.raintank.io) |
 [Email](mailto:contact@grafana.org)
 
+这是一个中文版本的Grafana分支，We try to finish one Chinese Version
+
+同时增加了一个echart地图组件。
+
 Grafana is an open source, feature rich metrics dashboard and graph editor for
 Graphite, Elasticsearch, OpenTSDB, Prometheus and InfluxDB.
 

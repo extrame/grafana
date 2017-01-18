@@ -34,4 +34,13 @@
             <input class="gf-form-input max-width-5" type="text" ng-model="ctrl.panel.from" ng-model-onblur ng-change="ctrl.refresh()">
         </div>
     </div>
+    <div class="section gf-form-group" ng-show="ctrl.panel.mapType=='line'">
+        <h5 class="section-heading">Lines Map Detail</h5>
+        <gf-form-switch class="gf-form" label="Show Spot At Line Start" label-class="width-10" checked="ctrl.panel.spot.showAtStart" on-change="ctrl.render()">
+        </gf-form-switch>
+        <gf-form-switch class="gf-form" label="Show Spot At Line Stop" label-class="width-10" checked="ctrl.panel.spot.showAtStop" on-change="ctrl.render()">
+        </gf-form-switch>
+        <gf-form-switch class="gf-form" label="Threshold" label-class="width-10" checked="ctrl.panel.spot.showAtStop" on-change="ctrl.render()">
+        </gf-form-switch>
+    </div>
 </div>
