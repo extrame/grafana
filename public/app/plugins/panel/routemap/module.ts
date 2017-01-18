@@ -45,8 +45,9 @@ class RouteMapCtrl extends MetricsPanelCtrl {
   panelDefaults = {
     mapType: "line",
     scopeSelected: "china",
-    from: 'from',
-    to: 'to',
+    from: {type: "field", value: "from"},
+    to: {type: "field", value: "to"},
+    at: {type: "field", value: "at"},
     links: [],
     color: '#a6c84c',
     spot: {showAtStart: false, showAtStop: true}
@@ -114,21 +115,51 @@ class RouteMapCtrl extends MetricsPanelCtrl {
     var coord = [];
     while (result != null) {
       var loc = undefined;
-      if (result[1] === this.panel.from) {
+      if (this.panel.from.type === "field" &&
+          result[1] === this.panel.from.value) {
         res['from'] = result[2];
         loc = this.getCoords(res["from"]);
-      } else if (result[1] === this.panel.to) {
+      } else if (this.panel.to.type === "field" &&
+                 result[1] === this.panel.to.value) {
         res['to'] = result[2];
         loc = this.getCoords(res["to"]);
-      } else if (result[1] === this.panel.at) {
+      } else if (this.panel.at.type === "field" &&
+                 result[1] === this.panel.at.value) {
         res['at'] = result[2];
         loc = this.getCoords(res["at"]);
       }
+
       if (loc !== undefined) {
         coord.push(loc);
       }
       var result = patt1.exec(alias);
     }
+
+    if (this.panel.mapType === "line") {
+      if (this.panel.from.type === "fixed") {
+        var loc = this.getCoords(this.panel.from.value);
+        if (loc !== undefined) {
+          coord[0] = loc;
+        }
+      }
+      if (this.panel.to.type === "fixed") {
+        var loc = this.getCoords(this.panel.to.value);
+        if (loc !== undefined) {
+          if (coord.length > 1) {
+            coord[1] = loc;
+          } else {
+            coord.push(loc);
+          }
+        }
+      }
+    } else if (this.panel.mapType === "spot" &&
+               this.panel.at.type === "fixed") {
+      var loc = this.getCoords(this.panel.at.value);
+      if (loc !== undefined) {
+        coord[0] = loc;
+      }
+    }
+
     if (coord.length === 2) {
       res.coords = coord;
       res.name = alias;

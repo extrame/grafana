@@ -23,15 +23,24 @@
         </div>
         <div class="gf-form" ng-show="ctrl.panel.mapType=='line'">
             <span class="gf-form-label width-9">From</span>
-            <input class="gf-form-input max-width-5" type="text" ng-model="ctrl.panel.from" ng-model-onblur ng-change="ctrl.refresh()">
+            <div class="gf-form-select-wrapper">
+                <select class="gf-form-input" ng-model="ctrl.panel.from.type" ng-options="v as v for (k,v) in ['field','fixed']"></select>
+            </div>
+            <input class="gf-form-input max-width-5" type="text" ng-model="ctrl.panel.from.value" ng-model-onblur ng-change="ctrl.refresh()">
         </div>
         <div class="gf-form" ng-show="ctrl.panel.mapType=='line'">
             <span class="gf-form-label width-9">To</span>
-            <input class="gf-form-input max-width-5" type="text" ng-model="ctrl.panel.to" ng-model-onblur ng-change="ctrl.refresh()">
+            <div class="gf-form-select-wrapper">
+                <select class="gf-form-input" ng-model="ctrl.panel.to.type" ng-options="v as v for (k,v) in ['field','fixed']"></select>
+            </div>
+            <input class="gf-form-input max-width-5" type="text" ng-model="ctrl.panel.to.value" ng-model-onblur ng-change="ctrl.refresh()">
         </div>
         <div class="gf-form" ng-show="ctrl.panel.mapType=='spot'">
             <span class="gf-form-label width-9">At</span>
-            <input class="gf-form-input max-width-5" type="text" ng-model="ctrl.panel.from" ng-model-onblur ng-change="ctrl.refresh()">
+            <div class="gf-form-select-wrapper">
+                <select class="gf-form-input" ng-model="ctrl.panel.at.type" ng-options="v as v for (k,v) in ['field','fixed']"></select>
+            </div>
+            <input class="gf-form-input max-width-5" type="text" ng-model="ctrl.panel.at.value" ng-model-onblur ng-change="ctrl.refresh()">
         </div>
     </div>
     <div class="section gf-form-group" ng-show="ctrl.panel.mapType=='line'">
@@ -40,7 +49,7 @@
         </gf-form-switch>
         <gf-form-switch class="gf-form" label="Show Spot At Line Stop" label-class="width-10" checked="ctrl.panel.spot.showAtStop" on-change="ctrl.render()">
         </gf-form-switch>
-        <gf-form-switch class="gf-form" label="Threshold" label-class="width-10" checked="ctrl.panel.spot.showAtStop" on-change="ctrl.render()">
+        <gf-form-switch class="gf-form" label="Threshold" label-class="width-10" checked="ctrl.panel.threshold" on-change="ctrl.render()">
         </gf-form-switch>
     </div>
 </div>
