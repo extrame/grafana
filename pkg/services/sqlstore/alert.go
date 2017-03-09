@@ -113,7 +113,7 @@ func HandleAlertsQuery(query *m.GetAlertsQuery) error {
 		return err
 	}
 
-	for i, _ := range alerts {
+	for i := range alerts {
 		if alerts[i].ExecutionError == " " {
 			alerts[i].ExecutionError = ""
 		}
@@ -238,6 +238,10 @@ func SetAlertState(cmd *m.SetAlertStateCommand) error {
 
 		if alert.State == m.AlertStatePaused {
 			return m.ErrCannotChangeStateOnPausedAlert
+		}
+
+		if alert.State == cmd.State {
+			return m.ErrRequiresNewState
 		}
 
 		alert.State = cmd.State
