@@ -1,19 +1,18 @@
-///<reference path="../../../headers/common.d.ts" />
-
-import angular from 'angular';
 import _ from 'lodash';
 import $ from 'jquery';
-import 'jquery.flot';
-import 'jquery.flot.gauge';
+import 'vendor/flot/jquery.flot';
+import 'vendor/flot/jquery.flot.gauge';
+import 'app/features/dashboard/panellinks/link_srv';
 
 import kbn from 'app/core/utils/kbn';
 import config from 'app/core/config';
 import TimeSeries from 'app/core/time_series2';
-import {MetricsPanelCtrl} from 'app/plugins/sdk';
+import { MetricsPanelCtrl } from 'app/plugins/sdk';
 
 class SingleStatCtrl extends MetricsPanelCtrl {
   static templateUrl = 'module.html';
 
+  dataType = 'timeseries';
   series: any[];
   data: any;
   fontSizes: any[];
@@ -21,7 +20,20 @@ class SingleStatCtrl extends MetricsPanelCtrl {
   invalidGaugeRange: boolean;
   panel: any;
   events: any;
-  valueNameOptions: any[] = ['min','max','avg', 'current', 'total', 'name', 'first', 'delta', 'diff', 'range'];
+  valueNameOptions: any[] = [
+    { value: 'min', text: 'Min' },
+    { value: 'max', text: 'Max' },
+    { value: 'avg', text: 'Average' },
+    { value: 'current', text: 'Current' },
+    { value: 'total', text: 'Total' },
+    { value: 'name', text: 'Name' },
+    { value: 'first', text: 'First' },
+    { value: 'delta', text: 'Delta' },
+    { value: 'diff', text: 'Difference' },
+    { value: 'range', text: 'Range' },
+    { value: 'last_time', text: 'Time of last point' },
+  ];
+  tableColumnOptions: any;
 
   // Set and populate defaults
   panelDefaults = {
@@ -35,16 +47,9 @@ class SingleStatCtrl extends MetricsPanelCtrl {
     prefix: '',
     postfix: '',
     nullText: null,
-    valueMaps: [
-      { value: 'null', op: '=', text: 'N/A' }
-    ],
-    mappingTypes: [
-      {name: 'value to text', value: 1},
-      {name: 'range to text', value: 2},
-    ],
-    rangeMaps: [
-      { from: 'null', to: 'null', text: 'N/A' }
-    ],
+    valueMaps: [{ value: 'null', op: '=', text: 'N/A' }],
+    mappingTypes: [{ name: 'value to text', value: 1 }, { name: 'range to text', value: 2 }],
+    rangeMaps: [{ from: 'null', to: 'null', text: 'N/A' }],
     mappingType: 1,
     nullPointMode: 'connected',
     valueName: 'avg',
@@ -54,7 +59,7 @@ class SingleStatCtrl extends MetricsPanelCtrl {
     thresholds: '',
     colorBackground: false,
     colorValue: false,
-    colors: ["rgba(245, 54, 54, 0.9)", "rgba(237, 129, 40, 0.89)", "rgba(50, 172, 45, 0.97)"],
+    colors: ['#299c46', 'rgba(237, 129, 40, 0.89)', '#d44a3a'],
     sparkline: {
       show: false,
       full: false,
@@ -66,12 +71,13 @@ class SingleStatCtrl extends MetricsPanelCtrl {
       minValue: 0,
       maxValue: 100,
       thresholdMarkers: true,
-      thresholdLabels: false
-    }
+      thresholdLabels: false,
+    },
+    tableColumn: '',
   };
 
   /** @ngInject */
-  constructor($scope, $injector, private $location, private linkSrv) {
+  constructor($scope, $injector, private linkSrv) {
     super($scope, $injector);
     _.defaults(this.panel, this.panelDefaults);
 
@@ -79,10 +85,13 @@ class SingleStatCtrl extends MetricsPanelCtrl {
     this.events.on('data-error', this.onDataError.bind(this));
     this.events.on('data-snapshot-load', this.onDataReceived.bind(this));
     this.events.on('init-edit-mode', this.onInitEditMode.bind(this));
+
+    this.onSparklineColorChange = this.onSparklineColorChange.bind(this);
+    this.onSparklineFillChange = this.onSparklineFillChange.bind(this);
   }
 
   onInitEditMode() {
-    this.fontSizes = ['20%', '30%','50%','70%','80%','100%', '110%', '120%', '150%', '170%', '200%'];
+    this.fontSizes = ['20%', '30%', '50%', '70%', '80%', '100%', '110%', '120%', '150%', '170%', '200%'];
     this.addEditorTab('Options', 'public/app/plugins/panel/singlestat/editor.html', 2);
     this.addEditorTab('Value Mappings', 'public/app/plugins/panel/singlestat/mappings.html', 3);
     this.unitFormats = kbn.getUnitFormats();
@@ -90,7 +99,7 @@ class SingleStatCtrl extends MetricsPanelCtrl {
 
   setUnitFormat(subItem) {
     this.panel.format = subItem.value;
-    this.render();
+    this.refresh();
   }
 
   onDataError(err) {
@@ -98,23 +107,99 @@ class SingleStatCtrl extends MetricsPanelCtrl {
   }
 
   onDataReceived(dataList) {
-    this.series = dataList.map(this.seriesHandler.bind(this));
-
-    var data: any = {};
-    this.setValues(data);
-
+    const data: any = {};
+    if (dataList.length > 0 && dataList[0].type === 'table') {
+      this.dataType = 'table';
+      const tableData = dataList.map(this.tableHandler.bind(this));
+      this.setTableValues(tableData, data);
+    } else {
+      this.dataType = 'timeseries';
+      this.series = dataList.map(this.seriesHandler.bind(this));
+      this.setValues(data);
+    }
     this.data = data;
     this.render();
   }
 
   seriesHandler(seriesData) {
-    var series = new TimeSeries({
-      datapoints: seriesData.datapoints,
+    const series = new TimeSeries({
+      datapoints: seriesData.datapoints || [],
       alias: seriesData.target,
     });
 
     series.flotpairs = series.getFlotPairs(this.panel.nullPointMode);
     return series;
+  }
+
+  tableHandler(tableData) {
+    const datapoints = [];
+    const columnNames = {};
+
+    tableData.columns.forEach((column, columnIndex) => {
+      columnNames[columnIndex] = column.text;
+    });
+
+    this.tableColumnOptions = columnNames;
+    if (!_.find(tableData.columns, ['text', this.panel.tableColumn])) {
+      this.setTableColumnToSensibleDefault(tableData);
+    }
+
+    tableData.rows.forEach(row => {
+      const datapoint = {};
+
+      row.forEach((value, columnIndex) => {
+        const key = columnNames[columnIndex];
+        datapoint[key] = value;
+      });
+
+      datapoints.push(datapoint);
+    });
+
+    return datapoints;
+  }
+
+  setTableColumnToSensibleDefault(tableData) {
+    if (tableData.columns.length === 1) {
+      this.panel.tableColumn = tableData.columns[0].text;
+    } else {
+      this.panel.tableColumn = _.find(tableData.columns, col => {
+        return col.type !== 'time';
+      }).text;
+    }
+  }
+
+  setTableValues(tableData, data) {
+    if (!tableData || tableData.length === 0) {
+      return;
+    }
+
+    if (tableData[0].length === 0 || tableData[0][0][this.panel.tableColumn] === undefined) {
+      return;
+    }
+
+    const datapoint = tableData[0][0];
+    data.value = datapoint[this.panel.tableColumn];
+
+    if (_.isString(data.value)) {
+      data.valueFormatted = _.escape(data.value);
+      data.value = 0;
+      data.valueRounded = 0;
+    } else {
+      const decimalInfo = this.getDecimalsForValue(data.value);
+      const formatFunc = kbn.valueFormats[this.panel.format];
+      data.valueFormatted = formatFunc(
+        datapoint[this.panel.tableColumn],
+        decimalInfo.decimals,
+        decimalInfo.scaledDecimals
+      );
+      data.valueRounded = kbn.roundValue(data.value, this.panel.decimals || 0);
+    }
+
+    this.setValueMapping(data);
+  }
+
+  canModifyText() {
+    return !this.panel.gauge.show;
   }
 
   setColoring(options) {
@@ -129,23 +214,40 @@ class SingleStatCtrl extends MetricsPanelCtrl {
   }
 
   invertColorOrder() {
-    var tmp = this.panel.colors[0];
+    const tmp = this.panel.colors[0];
     this.panel.colors[0] = this.panel.colors[2];
     this.panel.colors[2] = tmp;
     this.render();
   }
 
+  onColorChange(panelColorIndex) {
+    return color => {
+      this.panel.colors[panelColorIndex] = color;
+      this.render();
+    };
+  }
+
+  onSparklineColorChange(newColor) {
+    this.panel.sparkline.lineColor = newColor;
+    this.render();
+  }
+
+  onSparklineFillChange(newColor) {
+    this.panel.sparkline.fillColor = newColor;
+    this.render();
+  }
+
   getDecimalsForValue(value) {
     if (_.isNumber(this.panel.decimals)) {
-      return {decimals: this.panel.decimals, scaledDecimals: null};
+      return { decimals: this.panel.decimals, scaledDecimals: null };
     }
 
-    var delta = value / 2;
-    var dec = -Math.floor(Math.log(delta) / Math.LN10);
+    const delta = value / 2;
+    let dec = -Math.floor(Math.log(delta) / Math.LN10);
 
-    var magn = Math.pow(10, -dec),
-      norm = delta / magn, // norm is between 1.0 and 10.0
-      size;
+    const magn = Math.pow(10, -dec);
+    const norm = delta / magn; // norm is between 1.0 and 10.0
+    let size;
 
     if (norm < 1.5) {
       size = 1;
@@ -165,9 +267,11 @@ class SingleStatCtrl extends MetricsPanelCtrl {
     size *= magn;
 
     // reduce starting decimals if not needed
-    if (Math.floor(value) === value) { dec = 0; }
+    if (Math.floor(value) === value) {
+      dec = 0;
+    }
 
-    var result: any = {};
+    const result: any = {};
     result.decimals = Math.max(0, dec);
     result.scaledDecimals = result.decimals - Math.floor(Math.log(size) / Math.LN10) + 2;
 
@@ -178,149 +282,166 @@ class SingleStatCtrl extends MetricsPanelCtrl {
     data.flotpairs = [];
 
     if (this.series.length > 1) {
-      var error: any = new Error();
+      const error: any = new Error();
       error.message = 'Multiple Series Error';
-      error.data = 'Metric query returns ' + this.series.length +
-        ' series. Single Stat Panel expects a single series.\n\nResponse:\n'+JSON.stringify(this.series);
+      error.data =
+        'Metric query returns ' +
+        this.series.length +
+        ' series. Single Stat Panel expects a single series.\n\nResponse:\n' +
+        JSON.stringify(this.series);
       throw error;
     }
 
     if (this.series && this.series.length > 0) {
-      var lastPoint = _.last(this.series[0].datapoints);
-      var lastValue = _.isArray(lastPoint) ? lastPoint[0] : null;
+      const lastPoint = _.last(this.series[0].datapoints);
+      const lastValue = _.isArray(lastPoint) ? lastPoint[0] : null;
 
       if (this.panel.valueName === 'name') {
         data.value = 0;
         data.valueRounded = 0;
-        data.valueFormated = this.series[0].alias;
+        data.valueFormatted = this.series[0].alias;
       } else if (_.isString(lastValue)) {
         data.value = 0;
-        data.valueFormated = _.escape(lastValue);
+        data.valueFormatted = _.escape(lastValue);
         data.valueRounded = 0;
+      } else if (this.panel.valueName === 'last_time') {
+        const formatFunc = kbn.valueFormats[this.panel.format];
+        data.value = lastPoint[1];
+        data.valueRounded = data.value;
+        data.valueFormatted = formatFunc(data.value, this.dashboard.isTimezoneUtc());
       } else {
         data.value = this.series[0].stats[this.panel.valueName];
         data.flotpairs = this.series[0].flotpairs;
 
-        var decimalInfo = this.getDecimalsForValue(data.value);
-        var formatFunc = kbn.valueFormats[this.panel.format];
-        data.valueFormated = formatFunc(data.value, decimalInfo.decimals, decimalInfo.scaledDecimals);
+        const decimalInfo = this.getDecimalsForValue(data.value);
+        const formatFunc = kbn.valueFormats[this.panel.format];
+        data.valueFormatted = formatFunc(data.value, decimalInfo.decimals, decimalInfo.scaledDecimals);
         data.valueRounded = kbn.roundValue(data.value, decimalInfo.decimals);
       }
 
       // Add $__name variable for using in prefix or postfix
       data.scopedVars = _.extend({}, this.panel.scopedVars);
-      data.scopedVars["__name"] = {value: this.series[0].label};
+      data.scopedVars['__name'] = { value: this.series[0].label };
     }
+    this.setValueMapping(data);
+  }
 
+  setValueMapping(data) {
     // check value to text mappings if its enabled
     if (this.panel.mappingType === 1) {
-      for (var i = 0; i < this.panel.valueMaps.length; i++) {
-        var map = this.panel.valueMaps[i];
+      for (let i = 0; i < this.panel.valueMaps.length; i++) {
+        const map = this.panel.valueMaps[i];
         // special null case
         if (map.value === 'null') {
           if (data.value === null || data.value === void 0) {
-            data.valueFormated = map.text;
+            data.valueFormatted = map.text;
             return;
           }
           continue;
         }
 
         // value/number to text mapping
-        var value = parseFloat(map.value);
+        const value = parseFloat(map.value);
         if (value === data.valueRounded) {
-          data.valueFormated = map.text;
+          data.valueFormatted = map.text;
           return;
         }
       }
     } else if (this.panel.mappingType === 2) {
-      for (var i = 0; i < this.panel.rangeMaps.length; i++) {
-        var map = this.panel.rangeMaps[i];
+      for (let i = 0; i < this.panel.rangeMaps.length; i++) {
+        const map = this.panel.rangeMaps[i];
         // special null case
         if (map.from === 'null' && map.to === 'null') {
           if (data.value === null || data.value === void 0) {
-            data.valueFormated = map.text;
+            data.valueFormatted = map.text;
             return;
           }
           continue;
         }
 
         // value/number to range mapping
-        var from = parseFloat(map.from);
-        var to = parseFloat(map.to);
+        const from = parseFloat(map.from);
+        const to = parseFloat(map.to);
         if (to >= data.valueRounded && from <= data.valueRounded) {
-          data.valueFormated = map.text;
+          data.valueFormatted = map.text;
           return;
         }
       }
     }
 
     if (data.value === null || data.value === void 0) {
-      data.valueFormated = "no value";
+      data.valueFormatted = 'no value';
     }
-  };
+  }
 
   removeValueMap(map) {
-    var index = _.indexOf(this.panel.valueMaps, map);
+    const index = _.indexOf(this.panel.valueMaps, map);
     this.panel.valueMaps.splice(index, 1);
     this.render();
-  };
+  }
 
   addValueMap() {
-    this.panel.valueMaps.push({value: '', op: '=', text: '' });
+    this.panel.valueMaps.push({ value: '', op: '=', text: '' });
   }
 
   removeRangeMap(rangeMap) {
-    var index = _.indexOf(this.panel.rangeMaps, rangeMap);
+    const index = _.indexOf(this.panel.rangeMaps, rangeMap);
     this.panel.rangeMaps.splice(index, 1);
     this.render();
-  };
+  }
 
   addRangeMap() {
-    this.panel.rangeMaps.push({from: '', to: '', text: ''});
+    this.panel.rangeMaps.push({ from: '', to: '', text: '' });
   }
 
   link(scope, elem, attrs, ctrl) {
-    var $location = this.$location;
-    var linkSrv = this.linkSrv;
-    var $timeout = this.$timeout;
-    var panel = ctrl.panel;
-    var templateSrv = this.templateSrv;
-    var data, linkInfo;
-    var $panelContainer = elem.find('.panel-container');
+    const $location = this.$location;
+    const linkSrv = this.linkSrv;
+    const $timeout = this.$timeout;
+    const panel = ctrl.panel;
+    const templateSrv = this.templateSrv;
+    let data, linkInfo;
+    const $panelContainer = elem.find('.panel-container');
     elem = elem.find('.singlestat-panel');
 
-    function setElementHeight() {
-      elem.css('height', ctrl.height + 'px');
-    }
-
     function applyColoringThresholds(value, valueString) {
-      if (!panel.colorValue) {
-        return valueString;
-      }
-
-      var color = getColorForValue(data, value);
+      const color = getColorForValue(data, value);
       if (color) {
-        return '<span style="color:' + color + '">'+ valueString + '</span>';
+        return '<span style="color:' + color + '">' + valueString + '</span>';
       }
 
       return valueString;
     }
 
-    function getSpan(className, fontSize, value)  {
+    function getSpan(className, fontSize, value) {
       value = templateSrv.replace(value, data.scopedVars);
-      return '<span class="' + className + '" style="font-size:' + fontSize + '">' +
-        value + '</span>';
+      return '<span class="' + className + '" style="font-size:' + fontSize + '">' + value + '</span>';
     }
 
     function getBigValueHtml() {
-      var body = '<div class="singlestat-panel-value-container">';
+      let body = '<div class="singlestat-panel-value-container">';
 
-      if (panel.prefix) { body += getSpan('singlestat-panel-prefix', panel.prefixFontSize, panel.prefix); }
+      if (panel.prefix) {
+        let prefix = panel.prefix;
+        if (panel.colorPrefix) {
+          prefix = applyColoringThresholds(data.value, panel.prefix);
+        }
+        body += getSpan('singlestat-panel-prefix', panel.prefixFontSize, prefix);
+      }
 
-      var value = applyColoringThresholds(data.value, data.valueFormated);
+      let value = data.valueFormatted;
+      if (panel.colorValue) {
+        value = applyColoringThresholds(data.value, value);
+      }
       body += getSpan('singlestat-panel-value', panel.valueFontSize, value);
 
-      if (panel.postfix) { body += getSpan('singlestat-panel-postfix', panel.postfixFontSize, panel.postfix); }
+      if (panel.postfix) {
+        let postfix = panel.postfix;
+        if (panel.colorPostfix) {
+          postfix = applyColoringThresholds(data.value, panel.postfix);
+        }
+        body += getSpan('singlestat-panel-postfix', panel.postfixFontSize, postfix);
+      }
 
       body += '</div>';
 
@@ -328,16 +449,18 @@ class SingleStatCtrl extends MetricsPanelCtrl {
     }
 
     function getValueText() {
-      var result = panel.prefix ? panel.prefix : '';
-      result += data.valueFormated;
-      result += panel.postfix ? panel.postfix : '';
+      let result = panel.prefix ? templateSrv.replace(panel.prefix, data.scopedVars) : '';
+      result += data.valueFormatted;
+      result += panel.postfix ? templateSrv.replace(panel.postfix, data.scopedVars) : '';
 
       return result;
     }
 
     function addGauge() {
-      var width = elem.width();
-      var height = elem.height();
+      const width = elem.width();
+      const height = elem.height();
+      // Allow to use a bit more space for wide gauges
+      const dimension = Math.min(width, height * 1.3);
 
       ctrl.invalidGaugeRange = false;
       if (panel.gauge.minValue > panel.gauge.maxValue) {
@@ -345,40 +468,40 @@ class SingleStatCtrl extends MetricsPanelCtrl {
         return;
       }
 
-      var plotCanvas = $('<div></div>');
-      var plotCss = {
+      const plotCanvas = $('<div></div>');
+      const plotCss = {
         top: '10px',
         margin: 'auto',
         position: 'relative',
-        height: (height * 0.9) + 'px',
-        width:  width + 'px'
+        height: height * 0.9 + 'px',
+        width: dimension + 'px',
       };
 
       plotCanvas.css(plotCss);
 
-      var thresholds = [];
-      for (var i = 0; i < data.thresholds.length; i++) {
+      const thresholds = [];
+      for (let i = 0; i < data.thresholds.length; i++) {
         thresholds.push({
           value: data.thresholds[i],
-          color: data.colorMap[i]
+          color: data.colorMap[i],
         });
       }
       thresholds.push({
         value: panel.gauge.maxValue,
-        color: data.colorMap[data.colorMap.length  - 1]
+        color: data.colorMap[data.colorMap.length - 1],
       });
 
-      var bgColor = config.bootData.user.lightTheme
-        ? 'rgb(230,230,230)'
-        : 'rgb(38,38,38)';
+      const bgColor = config.bootData.user.lightTheme ? 'rgb(230,230,230)' : 'rgb(38,38,38)';
 
-      var fontScale = parseInt(panel.valueFontSize) / 100;
-      var dimension = Math.min(width, height);
-      var fontSize = Math.min(dimension/5, 100) * fontScale;
-      var gaugeWidth = Math.min(dimension/6, 60);
-      var thresholdMarkersWidth = gaugeWidth/5;
+      const fontScale = parseInt(panel.valueFontSize, 10) / 100;
+      const fontSize = Math.min(dimension / 5, 100) * fontScale;
+      // Reduce gauge width if threshold labels enabled
+      const gaugeWidthReduceRatio = panel.gauge.thresholdLabels ? 1.5 : 1;
+      const gaugeWidth = Math.min(dimension / 6, 60) / gaugeWidthReduceRatio;
+      const thresholdMarkersWidth = gaugeWidth / 5;
+      const thresholdLabelFontSize = fontSize / 2.5;
 
-      var options = {
+      const options = {
         series: {
           gauges: {
             gauge: {
@@ -397,33 +520,38 @@ class SingleStatCtrl extends MetricsPanelCtrl {
               values: thresholds,
               label: {
                 show: panel.gauge.thresholdLabels,
-                margin: 8,
-                font: { size: 18 }
+                margin: thresholdMarkersWidth + 1,
+                font: { size: thresholdLabelFontSize },
               },
               show: panel.gauge.thresholdMarkers,
               width: thresholdMarkersWidth,
             },
             value: {
               color: panel.colorValue ? getColorForValue(data, data.valueRounded) : null,
-              formatter: function() { return getValueText(); },
-              font: { size: fontSize, family: '"Helvetica Neue", Helvetica, Arial, sans-serif' }
+              formatter: () => {
+                return getValueText();
+              },
+              font: {
+                size: fontSize,
+                family: '"Helvetica Neue", Helvetica, Arial, sans-serif',
+              },
             },
-            show: true
-          }
-        }
+            show: true,
+          },
+        },
       };
 
       elem.append(plotCanvas);
 
-      var plotSeries = {
-        data: [[0, data.valueRounded]]
+      const plotSeries = {
+        data: [[0, data.value]],
       };
 
       $.plot(plotCanvas, [plotSeries], options);
     }
 
     function addSparkline() {
-      var width = elem.width() + 20;
+      const width = elem.width() + 20;
       if (width < 30) {
         // element has not gotten it's width yet
         // delay sparkline render
@@ -431,32 +559,33 @@ class SingleStatCtrl extends MetricsPanelCtrl {
         return;
       }
 
-      var height = ctrl.height;
-      var plotCanvas = $('<div></div>');
-      var plotCss: any = {};
+      const height = ctrl.height;
+      const plotCanvas = $('<div></div>');
+      const plotCss: any = {};
       plotCss.position = 'absolute';
 
       if (panel.sparkline.full) {
         plotCss.bottom = '5px';
         plotCss.left = '-5px';
-        plotCss.width = (width - 10) + 'px';
-        var dynamicHeightMargin = height <= 100 ? 5 : (Math.round((height/100)) * 15) + 5;
-        plotCss.height = (height - dynamicHeightMargin) + 'px';
+        plotCss.width = width - 10 + 'px';
+        const dynamicHeightMargin = height <= 100 ? 5 : Math.round(height / 100) * 15 + 5;
+        plotCss.height = height - dynamicHeightMargin + 'px';
       } else {
-        plotCss.bottom = "0px";
-        plotCss.left = "-5px";
-        plotCss.width = (width - 10) + 'px';
-        plotCss.height = Math.floor(height * 0.25) + "px";
+        plotCss.bottom = '0px';
+        plotCss.left = '-5px';
+        plotCss.width = width - 10 + 'px';
+        plotCss.height = Math.floor(height * 0.25) + 'px';
       }
 
       plotCanvas.css(plotCss);
 
-      var options = {
+      const options = {
         legend: { show: false },
         series: {
-          lines:  {
+          lines: {
             show: true,
             fill: 1,
+            zero: false,
             lineWidth: 1,
             fillColor: panel.sparkline.fillColor,
           },
@@ -464,7 +593,7 @@ class SingleStatCtrl extends MetricsPanelCtrl {
         yaxes: { show: false },
         xaxis: {
           show: false,
-          mode: "time",
+          mode: 'time',
           min: ctrl.range.from.valueOf(),
           max: ctrl.range.to.valueOf(),
         },
@@ -473,30 +602,30 @@ class SingleStatCtrl extends MetricsPanelCtrl {
 
       elem.append(plotCanvas);
 
-      var plotSeries = {
+      const plotSeries = {
         data: data.flotpairs,
-        color: panel.sparkline.lineColor
+        color: panel.sparkline.lineColor,
       };
 
       $.plot(plotCanvas, [plotSeries], options);
     }
 
     function render() {
-      if (!ctrl.data) { return; }
+      if (!ctrl.data) {
+        return;
+      }
       data = ctrl.data;
 
       // get thresholds
-      data.thresholds = panel.thresholds.split(',').map(function(strVale) {
+      data.thresholds = panel.thresholds.split(',').map(strVale => {
         return Number(strVale.trim());
       });
       data.colorMap = panel.colors;
 
-      setElementHeight();
+      const body = panel.gauge.show ? '' : getBigValueHtml();
 
-      var body = panel.gauge.show ? '' : getBigValueHtml();
-
-      if (panel.colorBackground && !isNaN(data.valueRounded)) {
-        var color = getColorForValue(data, data.valueRounded);
+      if (panel.colorBackground) {
+        const color = getColorForValue(data, data.value);
         if (color) {
           $panelContainer.css('background-color', color);
           if (scope.fullscreen) {
@@ -531,30 +660,35 @@ class SingleStatCtrl extends MetricsPanelCtrl {
 
     function hookupDrilldownLinkTooltip() {
       // drilldown link tooltip
-      var drilldownTooltip = $('<div id="tooltip" class="">hello</div>"');
+      const drilldownTooltip = $('<div id="tooltip" class="">hello</div>"');
 
-      elem.mouseleave(function() {
-        if (panel.links.length === 0) { return;}
-        $timeout(function() {
+      elem.mouseleave(() => {
+        if (panel.links.length === 0) {
+          return;
+        }
+        $timeout(() => {
           drilldownTooltip.detach();
         });
       });
 
-      elem.click(function(evt) {
-        if (!linkInfo) { return; }
+      elem.click(evt => {
+        if (!linkInfo) {
+          return;
+        }
         // ignore title clicks in title
-        if ($(evt).parents('.panel-header').length > 0) { return; }
+        if ($(evt).parents('.panel-header').length > 0) {
+          return;
+        }
 
         if (linkInfo.target === '_blank') {
-          var redirectWindow = window.open(linkInfo.href, '_blank');
-          redirectWindow.location;
+          window.open(linkInfo.href, '_blank');
           return;
         }
 
         if (linkInfo.href.indexOf('http') === 0) {
           window.location.href = linkInfo.href;
         } else {
-          $timeout(function() {
+          $timeout(() => {
             $location.url(linkInfo.href);
           });
         }
@@ -562,17 +696,19 @@ class SingleStatCtrl extends MetricsPanelCtrl {
         drilldownTooltip.detach();
       });
 
-      elem.mousemove(function(e) {
-        if (!linkInfo) { return;}
+      elem.mousemove(e => {
+        if (!linkInfo) {
+          return;
+        }
 
         drilldownTooltip.text('click to go to: ' + linkInfo.title);
-        drilldownTooltip.place_tt(e.pageX, e.pageY-50);
+        drilldownTooltip.place_tt(e.pageX, e.pageY - 50);
       });
     }
 
     hookupDrilldownLinkTooltip();
 
-    this.events.on('render', function() {
+    this.events.on('render', () => {
       render();
       ctrl.renderingCompleted();
     });
@@ -580,16 +716,17 @@ class SingleStatCtrl extends MetricsPanelCtrl {
 }
 
 function getColorForValue(data, value) {
-  for (var i = data.thresholds.length; i > 0; i--) {
-    if (value >= data.thresholds[i-1]) {
+  if (!_.isFinite(value)) {
+    return null;
+  }
+
+  for (let i = data.thresholds.length; i > 0; i--) {
+    if (value >= data.thresholds[i - 1]) {
       return data.colorMap[i];
     }
   }
+
   return _.first(data.colorMap);
 }
 
-export {
-  SingleStatCtrl,
-  SingleStatCtrl as PanelCtrl,
-  getColorForValue
-};
+export { SingleStatCtrl, SingleStatCtrl as PanelCtrl, getColorForValue };

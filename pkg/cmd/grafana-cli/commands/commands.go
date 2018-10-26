@@ -6,27 +6,28 @@ import (
 
 	"github.com/codegangsta/cli"
 	"github.com/fatih/color"
+	"github.com/grafana/grafana/pkg/bus"
 	"github.com/grafana/grafana/pkg/cmd/grafana-cli/logger"
 	"github.com/grafana/grafana/pkg/services/sqlstore"
 	"github.com/grafana/grafana/pkg/setting"
 )
 
-var configFile = flag.String("config", "", "path to config file")
-var homePath = flag.String("homepath", "", "path to grafana install/home path, defaults to working directory")
-
 func runDbCommand(command func(commandLine CommandLine) error) func(context *cli.Context) {
 	return func(context *cli.Context) {
+		cmd := &contextCommandLine{context}
 
-		flag.Parse()
-		setting.NewConfigContext(&setting.CommandLineArgs{
-			Config:   *configFile,
-			HomePath: *homePath,
+		cfg := setting.NewCfg()
+		cfg.Load(&setting.CommandLineArgs{
+			Config:   cmd.String("config"),
+			HomePath: cmd.String("homepath"),
 			Args:     flag.Args(),
 		})
 
-		sqlstore.NewEngine()
+		engine := &sqlstore.SqlStore{}
+		engine.Cfg = cfg
+		engine.Bus = bus.GetBus()
+		engine.Init()
 
-		cmd := &contextCommandLine{context}
 		if err := command(cmd); err != nil {
 			logger.Errorf("\n%s: ", color.RedString("Error"))
 			logger.Errorf("%s\n\n", err)
@@ -95,6 +96,16 @@ var adminCommands = []cli.Command{
 		Name:   "reset-admin-password",
 		Usage:  "reset-admin-password <new password>",
 		Action: runDbCommand(resetPasswordCommand),
+		Flags: []cli.Flag{
+			cli.StringFlag{
+				Name:  "homepath",
+				Usage: "path to grafana install/home path, defaults to working directory",
+			},
+			cli.StringFlag{
+				Name:  "config",
+				Usage: "path to config file",
+			},
+		},
 	},
 }
 

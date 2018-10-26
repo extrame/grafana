@@ -5,6 +5,7 @@ type OAuthInfo struct {
 	Scopes                 []string
 	AuthUrl, TokenUrl      string
 	Enabled                bool
+	EmailAttributeName     string
 	AllowedDomains         []string
 	HostedDomain           string
 	ApiUrl                 string
@@ -13,6 +14,7 @@ type OAuthInfo struct {
 	TlsClientCert          string
 	TlsClientKey           string
 	TlsClientCa            string
+	TlsSkipVerify          bool
 }
 
 type OAuther struct {

@@ -2,41 +2,40 @@ package middleware
 
 import (
 	"strconv"
-	"strings"
 
 	"gopkg.in/macaron.v1"
 
 	"github.com/grafana/grafana/pkg/bus"
 	"github.com/grafana/grafana/pkg/components/apikeygen"
 	"github.com/grafana/grafana/pkg/log"
-	l "github.com/grafana/grafana/pkg/login"
-	"github.com/grafana/grafana/pkg/metrics"
 	m "github.com/grafana/grafana/pkg/models"
+	"github.com/grafana/grafana/pkg/services/session"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/util"
 )
 
-type Context struct {
-	*macaron.Context
-	*m.SignedInUser
-
-	Session SessionStore
-
-	IsSignedIn     bool
-	IsRenderCall   bool
-	AllowAnonymous bool
-	Logger         log.Logger
-}
+var (
+	ReqGrafanaAdmin = Auth(&AuthOptions{ReqSignedIn: true, ReqGrafanaAdmin: true})
+	ReqSignedIn     = Auth(&AuthOptions{ReqSignedIn: true})
+	ReqEditorRole   = RoleAuth(m.ROLE_EDITOR, m.ROLE_ADMIN)
+	ReqOrgAdmin     = RoleAuth(m.ROLE_ADMIN)
+)
 
 func GetContextHandler() macaron.Handler {
 	return func(c *macaron.Context) {
-		ctx := &Context{
+		ctx := &m.ReqContext{
 			Context:        c,
 			SignedInUser:   &m.SignedInUser{},
-			Session:        GetSession(),
+			Session:        session.GetSession(),
 			IsSignedIn:     false,
 			AllowAnonymous: false,
 			Logger:         log.New("context"),
+		}
+
+		orgId := int64(0)
+		orgIdHeader := ctx.Req.Header.Get("X-Grafana-Org-Id")
+		if orgIdHeader != "" {
+			orgId, _ = strconv.ParseInt(orgIdHeader, 10, 64)
 		}
 
 		// the order in which these are tested are important
@@ -44,22 +43,31 @@ func GetContextHandler() macaron.Handler {
 		// then init session and look for userId in session
 		// then look for api key in session (special case for render calls via api)
 		// then test if anonymous access is enabled
-		if initContextWithRenderAuth(ctx) ||
-			initContextWithApiKey(ctx) ||
-			initContextWithBasicAuth(ctx) ||
-			initContextWithAuthProxy(ctx) ||
-			initContextWithUserSessionCookie(ctx) ||
-			initContextWithAnonymousUser(ctx) {
+		switch {
+		case initContextWithRenderAuth(ctx):
+		case initContextWithApiKey(ctx):
+		case initContextWithBasicAuth(ctx, orgId):
+		case initContextWithAuthProxy(ctx, orgId):
+		case initContextWithUserSessionCookie(ctx, orgId):
+		case initContextWithAnonymousUser(ctx):
 		}
 
 		ctx.Logger = log.New("context", "userId", ctx.UserId, "orgId", ctx.OrgId, "uname", ctx.Login)
 		ctx.Data["ctx"] = ctx
 
 		c.Map(ctx)
+
+		// update last seen every 5min
+		if ctx.ShouldUpdateLastSeenAt() {
+			ctx.Logger.Debug("Updating last user_seen_at", "user_id", ctx.UserId)
+			if err := bus.Dispatch(&m.UpdateUserLastSeenAtCommand{UserId: ctx.UserId}); err != nil {
+				ctx.Logger.Error("Failed to update last_seen_at", "error", err)
+			}
+		}
 	}
 }
 
-func initContextWithAnonymousUser(ctx *Context) bool {
+func initContextWithAnonymousUser(ctx *m.ReqContext) bool {
 	if !setting.AnonymousEnabled {
 		return false
 	}
@@ -68,20 +76,20 @@ func initContextWithAnonymousUser(ctx *Context) bool {
 	if err := bus.Dispatch(&orgQuery); err != nil {
 		log.Error(3, "Anonymous access organization error: '%s': %s", setting.AnonymousOrgName, err)
 		return false
-	} else {
-		ctx.IsSignedIn = false
-		ctx.AllowAnonymous = true
-		ctx.SignedInUser = &m.SignedInUser{}
-		ctx.OrgRole = m.RoleType(setting.AnonymousOrgRole)
-		ctx.OrgId = orgQuery.Result.Id
-		ctx.OrgName = orgQuery.Result.Name
-		return true
 	}
+
+	ctx.IsSignedIn = false
+	ctx.AllowAnonymous = true
+	ctx.SignedInUser = &m.SignedInUser{IsAnonymous: true}
+	ctx.OrgRole = m.RoleType(setting.AnonymousOrgRole)
+	ctx.OrgId = orgQuery.Result.Id
+	ctx.OrgName = orgQuery.Result.Name
+	return true
 }
 
-func initContextWithUserSessionCookie(ctx *Context) bool {
+func initContextWithUserSessionCookie(ctx *m.ReqContext, orgId int64) bool {
 	// initialize session
-	if err := ctx.Session.Start(ctx); err != nil {
+	if err := ctx.Session.Start(ctx.Context); err != nil {
 		ctx.Logger.Error("Failed to start session", "error", err)
 		return false
 	}
@@ -91,18 +99,18 @@ func initContextWithUserSessionCookie(ctx *Context) bool {
 		return false
 	}
 
-	query := m.GetSignedInUserQuery{UserId: userId}
+	query := m.GetSignedInUserQuery{UserId: userId, OrgId: orgId}
 	if err := bus.Dispatch(&query); err != nil {
-		ctx.Logger.Error("Failed to get user with id", "userId", userId)
+		ctx.Logger.Error("Failed to get user with id", "userId", userId, "error", err)
 		return false
-	} else {
-		ctx.SignedInUser = query.Result
-		ctx.IsSignedIn = true
-		return true
 	}
+
+	ctx.SignedInUser = query.Result
+	ctx.IsSignedIn = true
+	return true
 }
 
-func initContextWithApiKey(ctx *Context) bool {
+func initContextWithApiKey(ctx *m.ReqContext) bool {
 	var keyString string
 	if keyString = getApiKey(ctx); keyString == "" {
 		return false
@@ -114,30 +122,31 @@ func initContextWithApiKey(ctx *Context) bool {
 		ctx.JsonApiErr(401, "Invalid API key", err)
 		return true
 	}
+
 	// fetch key
 	keyQuery := m.GetApiKeyByNameQuery{KeyName: decoded.Name, OrgId: decoded.OrgId}
 	if err := bus.Dispatch(&keyQuery); err != nil {
 		ctx.JsonApiErr(401, "Invalid API key", err)
 		return true
-	} else {
-		apikey := keyQuery.Result
+	}
 
-		// validate api key
-		if !apikeygen.IsValid(decoded, apikey.Key) {
-			ctx.JsonApiErr(401, "Invalid API key", err)
-			return true
-		}
+	apikey := keyQuery.Result
 
-		ctx.IsSignedIn = true
-		ctx.SignedInUser = &m.SignedInUser{}
-		ctx.OrgRole = apikey.Role
-		ctx.ApiKeyId = apikey.Id
-		ctx.OrgId = apikey.OrgId
+	// validate api key
+	if !apikeygen.IsValid(decoded, apikey.Key) {
+		ctx.JsonApiErr(401, "Invalid API key", err)
 		return true
 	}
+
+	ctx.IsSignedIn = true
+	ctx.SignedInUser = &m.SignedInUser{}
+	ctx.OrgRole = apikey.Role
+	ctx.ApiKeyId = apikey.Id
+	ctx.OrgId = apikey.OrgId
+	return true
 }
 
-func initContextWithBasicAuth(ctx *Context) bool {
+func initContextWithBasicAuth(ctx *m.ReqContext, orgId int64) bool {
 
 	if !setting.BasicAuthEnabled {
 		return false
@@ -162,79 +171,29 @@ func initContextWithBasicAuth(ctx *Context) bool {
 
 	user := loginQuery.Result
 
-	loginUserQuery := l.LoginUserQuery{Username: username, Password: password, User: user}
+	loginUserQuery := m.LoginUserQuery{Username: username, Password: password, User: user}
 	if err := bus.Dispatch(&loginUserQuery); err != nil {
 		ctx.JsonApiErr(401, "Invalid username or password", err)
 		return true
 	}
 
-	query := m.GetSignedInUserQuery{UserId: user.Id}
+	query := m.GetSignedInUserQuery{UserId: user.Id, OrgId: orgId}
 	if err := bus.Dispatch(&query); err != nil {
 		ctx.JsonApiErr(401, "Authentication error", err)
 		return true
-	} else {
-		ctx.SignedInUser = query.Result
-		ctx.IsSignedIn = true
-		return true
 	}
+
+	ctx.SignedInUser = query.Result
+	ctx.IsSignedIn = true
+	return true
 }
 
-// Handle handles and logs error by given status.
-func (ctx *Context) Handle(status int, title string, err error) {
-	if err != nil {
-		ctx.Logger.Error(title, "error", err)
-		if setting.Env != setting.PROD {
-			ctx.Data["ErrorMsg"] = err
+func AddDefaultResponseHeaders() macaron.Handler {
+	return func(ctx *m.ReqContext) {
+		if ctx.IsApiRequest() && ctx.Req.Method == "GET" {
+			ctx.Resp.Header().Add("Cache-Control", "no-cache")
+			ctx.Resp.Header().Add("Pragma", "no-cache")
+			ctx.Resp.Header().Add("Expires", "-1")
 		}
 	}
-
-	ctx.Data["Title"] = title
-	ctx.Data["AppSubUrl"] = setting.AppSubUrl
-	ctx.HTML(status, strconv.Itoa(status))
-}
-
-func (ctx *Context) JsonOK(message string) {
-	resp := make(map[string]interface{})
-	resp["message"] = message
-	ctx.JSON(200, resp)
-}
-
-func (ctx *Context) IsApiRequest() bool {
-	return strings.HasPrefix(ctx.Req.URL.Path, "/api")
-}
-
-func (ctx *Context) JsonApiErr(status int, message string, err error) {
-	resp := make(map[string]interface{})
-
-	if err != nil {
-		ctx.Logger.Error(message, "error", err)
-		if setting.Env != setting.PROD {
-			resp["error"] = err.Error()
-		}
-	}
-
-	switch status {
-	case 404:
-		resp["message"] = "Not Found"
-	case 500:
-		resp["message"] = "Internal Server Error"
-	}
-
-	if message != "" {
-		resp["message"] = message
-	}
-
-	ctx.JSON(status, resp)
-}
-
-func (ctx *Context) HasUserRole(role m.RoleType) bool {
-	return ctx.OrgRole.Includes(role)
-}
-
-func (ctx *Context) HasHelpFlag(flag m.HelpFlags1) bool {
-	return ctx.HelpFlags1.HasFlag(flag)
-}
-
-func (ctx *Context) TimeRequest(timer metrics.Timer) {
-	ctx.Data["perfmon.timer"] = timer
 }

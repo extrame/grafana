@@ -7,7 +7,6 @@ import (
 
 	"github.com/grafana/grafana/pkg/bus"
 	"github.com/grafana/grafana/pkg/log"
-	"github.com/grafana/grafana/pkg/metrics"
 	m "github.com/grafana/grafana/pkg/models"
 	"github.com/grafana/grafana/pkg/services/alerting"
 )
@@ -100,7 +99,7 @@ func NewPushoverNotifier(model *m.AlertNotification) (alerting.Notifier, error) 
 		return nil, alerting.ValidationError{Reason: "API token not given"}
 	}
 	return &PushoverNotifier{
-		NotifierBase: NewNotifierBase(model.Id, model.IsDefault, model.Name, model.Type, model.Settings),
+		NotifierBase: NewNotifierBase(model),
 		UserKey:      userKey,
 		ApiToken:     apiToken,
 		Priority:     priority,
@@ -125,12 +124,12 @@ type PushoverNotifier struct {
 }
 
 func (this *PushoverNotifier) Notify(evalContext *alerting.EvalContext) error {
-	metrics.M_Alerting_Notification_Sent_Pushover.Inc(1)
 	ruleUrl, err := evalContext.GetRuleUrl()
 	if err != nil {
 		this.log.Error("Failed get rule link", "error", err)
 		return err
 	}
+
 	message := evalContext.Rule.Message
 	for idx, evt := range evalContext.EvalMatches {
 		message += fmt.Sprintf("\n<b>%s</b>: %v", evt.Metric, evt.Value)
@@ -139,8 +138,15 @@ func (this *PushoverNotifier) Notify(evalContext *alerting.EvalContext) error {
 		}
 	}
 	if evalContext.Error != nil {
-		message += fmt.Sprintf("\n<b>Error message</b> %s", evalContext.Error.Error())
+		message += fmt.Sprintf("\n<b>Error message:</b> %s", evalContext.Error.Error())
 	}
+	if evalContext.ImagePublicUrl != "" {
+		message += fmt.Sprintf("\n<a href=\"%s\">Show graph image</a>", evalContext.ImagePublicUrl)
+	}
+	if message == "" {
+		message = "Notification message missing (Set a notification message to replace this text.)"
+	}
+
 	q := url.Values{}
 	q.Add("user", this.UserKey)
 	q.Add("token", this.ApiToken)

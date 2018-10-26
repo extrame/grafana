@@ -21,12 +21,12 @@ The export feature is now accessed from the share menu.
 Dashboards exported from Grafana 3.1 are now more portable and easier for others to import than before.
 The export process extracts information data source types used by panels and adds these to a new `inputs`
 section in the dashboard json. So when you or another person tries to import the dashboard they will be asked to
-select data source and optional metrix prefix options.
+select data source and optional metric prefix options.
 
 <img src="/img/docs/v31/import_step1.png">
 
 The above screenshot shows the new import modal that gives you 3 options for how to import a dashboard.
-One notable new addition here is the ability to import directly from Dashboards shared on [Grafana.net](https://grafana.net).
+One notable new addition here is the ability to import directly from Dashboards shared on [Grafana.com](https://grafana.com).
 
 The next step in the import process:
 
@@ -37,9 +37,9 @@ shows a CollectD dashboard for Graphite that requires a metric prefix be specifi
 
 ## Discover Dashboards
 
-On [Grafana.net](https://grafana.net) you can now browse & search for dashboards. We have already added a few but
+On [Grafana.com](https://grafana.com) you can now browse & search for dashboards. We have already added a few but
 more are being uploaded every day. To import a dashboard just copy the dashboard url and head back to Grafana,
-then Dashboard Search -> Import -> Paste Grafana.net Dashboard URL.
+then Dashboard Search -> Import -> Paste Grafana.com Dashboard URL.
 
 <img src="/img/docs/v31/gnet_dashboards_list.png">
 
@@ -53,7 +53,7 @@ Grafana url to share with a colleague without having to use the Share modal.
 
 ## Internal metrics
 
-Do you want metrics about viewing metrics? Ofc you do! In this release we added support for sending metrics about Grafana to graphite.
+Do you want metrics about viewing metrics? Of course you do! In this release we added support for sending metrics about Grafana to graphite.
 You can configure interval and server in the config file.
 
 ## Logging

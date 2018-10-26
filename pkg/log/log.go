@@ -14,14 +14,19 @@ import (
 
 	"github.com/go-stack/stack"
 	"github.com/inconshreveable/log15"
-	"github.com/inconshreveable/log15/term"
+	isatty "github.com/mattn/go-isatty"
+
+	"github.com/grafana/grafana/pkg/util"
 )
 
 var Root log15.Logger
 var loggersToClose []DisposableHandler
+var loggersToReload []ReloadableHandler
+var filters map[string]log15.Lvl
 
 func init() {
 	loggersToClose = make([]DisposableHandler, 0)
+	loggersToReload = make([]ReloadableHandler, 0)
 	Root = log15.Root()
 	Root.SetHandler(log15.DiscardHandler())
 }
@@ -34,7 +39,7 @@ func New(logger string, ctx ...interface{}) Logger {
 func Trace(format string, v ...interface{}) {
 	var message string
 	if len(v) > 0 {
-		message = fmt.Sprintf(format, v)
+		message = fmt.Sprintf(format, v...)
 	} else {
 		message = format
 	}
@@ -45,7 +50,7 @@ func Trace(format string, v ...interface{}) {
 func Debug(format string, v ...interface{}) {
 	var message string
 	if len(v) > 0 {
-		message = fmt.Sprintf(format, v)
+		message = fmt.Sprintf(format, v...)
 	} else {
 		message = format
 	}
@@ -60,7 +65,7 @@ func Debug2(message string, v ...interface{}) {
 func Info(format string, v ...interface{}) {
 	var message string
 	if len(v) > 0 {
-		message = fmt.Sprintf(format, v)
+		message = fmt.Sprintf(format, v...)
 	} else {
 		message = format
 	}
@@ -75,7 +80,7 @@ func Info2(message string, v ...interface{}) {
 func Warn(format string, v ...interface{}) {
 	var message string
 	if len(v) > 0 {
-		message = fmt.Sprintf(format, v)
+		message = fmt.Sprintf(format, v...)
 	} else {
 		message = format
 	}
@@ -88,7 +93,7 @@ func Warn2(message string, v ...interface{}) {
 }
 
 func Error(skip int, format string, v ...interface{}) {
-	Root.Error(fmt.Sprintf(format, v))
+	Root.Error(fmt.Sprintf(format, v...))
 }
 
 func Error2(message string, v ...interface{}) {
@@ -96,11 +101,11 @@ func Error2(message string, v ...interface{}) {
 }
 
 func Critical(skip int, format string, v ...interface{}) {
-	Root.Crit(fmt.Sprintf(format, v))
+	Root.Crit(fmt.Sprintf(format, v...))
 }
 
 func Fatal(skip int, format string, v ...interface{}) {
-	Root.Crit(fmt.Sprintf(format, v))
+	Root.Crit(fmt.Sprintf(format, v...))
 	Close()
 	os.Exit(1)
 }
@@ -110,6 +115,31 @@ func Close() {
 		logger.Close()
 	}
 	loggersToClose = make([]DisposableHandler, 0)
+}
+
+func Reload() {
+	for _, logger := range loggersToReload {
+		logger.Reload()
+	}
+}
+
+func GetLogLevelFor(name string) Lvl {
+	if level, ok := filters[name]; ok {
+		switch level {
+		case log15.LvlWarn:
+			return LvlWarn
+		case log15.LvlInfo:
+			return LvlInfo
+		case log15.LvlError:
+			return LvlError
+		case log15.LvlCrit:
+			return LvlCrit
+		default:
+			return LvlDebug
+		}
+	}
+
+	return LvlInfo
 }
 
 var logLevels = map[string]log15.Lvl{
@@ -155,7 +185,7 @@ func getFilters(filterStrArray []string) map[string]log15.Lvl {
 func getLogFormat(format string) log15.Format {
 	switch format {
 	case "console":
-		if term.IsTty(os.Stdout.Fd()) {
+		if isatty.IsTerminal(os.Stdout.Fd()) {
 			return log15.TerminalFormat()
 		}
 		return log15.LogfmtFormat()
@@ -172,7 +202,7 @@ func ReadLoggingConfig(modes []string, logsPath string, cfg *ini.File) {
 	Close()
 
 	defaultLevelName, _ := getLogLevelFromConfig("log", "info", cfg)
-	defaultFilters := getFilters(cfg.Section("log").Key("filters").Strings(" "))
+	defaultFilters := getFilters(util.SplitString(cfg.Section("log").Key("filters").String()))
 
 	handlers := make([]log15.Handler, 0)
 
@@ -185,7 +215,7 @@ func ReadLoggingConfig(modes []string, logsPath string, cfg *ini.File) {
 
 		// Log level.
 		_, level := getLogLevelFromConfig("log."+mode, defaultLevelName, cfg)
-		modeFilters := getFilters(sec.Key("filters").Strings(" "))
+		filters := getFilters(util.SplitString(sec.Key("filters").String()))
 		format := getLogFormat(sec.Key("format").MustString(""))
 
 		var handler log15.Handler
@@ -208,6 +238,7 @@ func ReadLoggingConfig(modes []string, logsPath string, cfg *ini.File) {
 			fileHandler.Init()
 
 			loggersToClose = append(loggersToClose, fileHandler)
+			loggersToReload = append(loggersToReload, fileHandler)
 			handler = fileHandler
 		case "syslog":
 			sysLogHandler := NewSyslog(sec, format)
@@ -217,12 +248,12 @@ func ReadLoggingConfig(modes []string, logsPath string, cfg *ini.File) {
 		}
 
 		for key, value := range defaultFilters {
-			if _, exist := modeFilters[key]; !exist {
-				modeFilters[key] = value
+			if _, exist := filters[key]; !exist {
+				filters[key] = value
 			}
 		}
 
-		handler = LogFilterHandler(level, modeFilters, handler)
+		handler = LogFilterHandler(level, filters, handler)
 		handlers = append(handlers, handler)
 	}
 
@@ -234,8 +265,8 @@ func LogFilterHandler(maxLevel log15.Lvl, filters map[string]log15.Lvl, h log15.
 
 		if len(filters) > 0 {
 			for i := 0; i < len(r.Ctx); i += 2 {
-				key := r.Ctx[i].(string)
-				if key == "logger" {
+				key, ok := r.Ctx[i].(string)
+				if ok && key == "logger" {
 					loggerName, strOk := r.Ctx[i+1].(string)
 					if strOk {
 						if filterLevel, ok := filters[loggerName]; ok {

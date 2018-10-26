@@ -4,13 +4,15 @@
   "id": "dashlist",
 
   "info": {
+    "description": "List of dynamic links to other dashboards",
     "author": {
       "name": "Grafana Project",
-      "url": "http://grafana.org"
+      "url": "https://grafana.com"
 },
     "logos": {
       "small": "img/icn-dashlist-panel.svg",
       "large": "img/icn-dashlist-panel.svg"
-    }
+    },
+    "version": "5.0.0"
   }
 }

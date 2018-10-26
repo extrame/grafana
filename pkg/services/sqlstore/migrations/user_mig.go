@@ -1,6 +1,12 @@
 package migrations
 
-import . "github.com/grafana/grafana/pkg/services/sqlstore/migrator"
+import (
+	"fmt"
+
+	"github.com/go-xorm/xorm"
+	. "github.com/grafana/grafana/pkg/services/sqlstore/migrator"
+	"github.com/grafana/grafana/pkg/util"
+)
 
 func addUserMigrations(mg *Migrator) {
 	userV1 := Table{
@@ -8,8 +14,8 @@ func addUserMigrations(mg *Migrator) {
 		Columns: []*Column{
 			{Name: "id", Type: DB_BigInt, IsPrimaryKey: true, IsAutoIncrement: true},
 			{Name: "version", Type: DB_Int, Nullable: false},
-			{Name: "login", Type: DB_NVarchar, Length: 255, Nullable: false},
-			{Name: "email", Type: DB_NVarchar, Length: 255, Nullable: false},
+			{Name: "login", Type: DB_NVarchar, Length: 190, Nullable: false},
+			{Name: "email", Type: DB_NVarchar, Length: 190, Nullable: false},
 			{Name: "name", Type: DB_NVarchar, Length: 255, Nullable: true},
 			{Name: "password", Type: DB_NVarchar, Length: 255, Nullable: true},
 			{Name: "salt", Type: DB_NVarchar, Length: 50, Nullable: true},
@@ -47,8 +53,8 @@ func addUserMigrations(mg *Migrator) {
 		Columns: []*Column{
 			{Name: "id", Type: DB_BigInt, IsPrimaryKey: true, IsAutoIncrement: true},
 			{Name: "version", Type: DB_Int, Nullable: false},
-			{Name: "login", Type: DB_NVarchar, Length: 255, Nullable: false},
-			{Name: "email", Type: DB_NVarchar, Length: 255, Nullable: false},
+			{Name: "login", Type: DB_NVarchar, Length: 190, Nullable: false},
+			{Name: "email", Type: DB_NVarchar, Length: 190, Nullable: false},
 			{Name: "name", Type: DB_NVarchar, Length: 255, Nullable: true},
 			{Name: "password", Type: DB_NVarchar, Length: 255, Nullable: true},
 			{Name: "salt", Type: DB_NVarchar, Length: 50, Nullable: true},
@@ -92,4 +98,52 @@ func addUserMigrations(mg *Migrator) {
 	mg.AddMigration("Add column help_flags1 to user table", NewAddColumnMigration(userV2, &Column{
 		Name: "help_flags1", Type: DB_BigInt, Nullable: false, Default: "0",
 	}))
+
+	mg.AddMigration("Update user table charset", NewTableCharsetMigration("user", []*Column{
+		{Name: "login", Type: DB_NVarchar, Length: 190, Nullable: false},
+		{Name: "email", Type: DB_NVarchar, Length: 190, Nullable: false},
+		{Name: "name", Type: DB_NVarchar, Length: 255, Nullable: true},
+		{Name: "password", Type: DB_NVarchar, Length: 255, Nullable: true},
+		{Name: "salt", Type: DB_NVarchar, Length: 50, Nullable: true},
+		{Name: "rands", Type: DB_NVarchar, Length: 50, Nullable: true},
+		{Name: "company", Type: DB_NVarchar, Length: 255, Nullable: true},
+		{Name: "theme", Type: DB_NVarchar, Length: 255, Nullable: true},
+	}))
+
+	mg.AddMigration("Add last_seen_at column to user", NewAddColumnMigration(userV2, &Column{
+		Name: "last_seen_at", Type: DB_DateTime, Nullable: true,
+	}))
+
+	// Adds salt & rands for old users who used ldap or oauth
+	mg.AddMigration("Add missing user data", &AddMissingUserSaltAndRandsMigration{})
+}
+
+type AddMissingUserSaltAndRandsMigration struct {
+	MigrationBase
+}
+
+func (m *AddMissingUserSaltAndRandsMigration) Sql(dialect Dialect) string {
+	return "code migration"
+}
+
+type TempUserDTO struct {
+	Id    int64
+	Login string
+}
+
+func (m *AddMissingUserSaltAndRandsMigration) Exec(sess *xorm.Session, mg *Migrator) error {
+	users := make([]*TempUserDTO, 0)
+
+	err := sess.SQL(fmt.Sprintf("SELECT id, login from %s WHERE rands = ''", mg.Dialect.Quote("user"))).Find(&users)
+	if err != nil {
+		return err
+	}
+
+	for _, user := range users {
+		_, err := sess.Exec("UPDATE "+mg.Dialect.Quote("user")+" SET salt = ?, rands = ? WHERE id = ?", util.GetRandomString(10), util.GetRandomString(10), user.Id)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

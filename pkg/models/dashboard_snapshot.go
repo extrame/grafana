@@ -29,7 +29,6 @@ type DashboardSnapshotDTO struct {
 	Id          int64  `json:"id"`
 	Name        string `json:"name"`
 	Key         string `json:"key"`
-	DeleteKey   string `json:"deleteKey"`
 	OrgId       int64  `json:"orgId"`
 	UserId      int64  `json:"userId"`
 	External    bool   `json:"external"`
@@ -64,20 +63,24 @@ type DeleteDashboardSnapshotCommand struct {
 }
 
 type DeleteExpiredSnapshotsCommand struct {
+	DeletedRows int64
 }
 
 type GetDashboardSnapshotQuery struct {
-	Key string
+	Key       string
+	DeleteKey string
 
 	Result *DashboardSnapshot
 }
 
 type DashboardSnapshots []*DashboardSnapshot
+type DashboardSnapshotsList []*DashboardSnapshotDTO
 
 type GetDashboardSnapshotsQuery struct {
-	Name  string
-	Limit int
-	OrgId int64
+	Name         string
+	Limit        int
+	OrgId        int64
+	SignedInUser *SignedInUser
 
-	Result DashboardSnapshots
+	Result DashboardSnapshotsList
 }

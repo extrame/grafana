@@ -1,20 +1,23 @@
 package imguploader
 
 import (
+	"context"
 	"fmt"
 	"regexp"
+
+	"github.com/grafana/grafana/pkg/log"
 
 	"github.com/grafana/grafana/pkg/setting"
 )
 
 type ImageUploader interface {
-	Upload(path string) (string, error)
+	Upload(ctx context.Context, path string) (string, error)
 }
 
 type NopImageUploader struct {
 }
 
-func (NopImageUploader) Upload(path string) (string, error) {
+func (NopImageUploader) Upload(ctx context.Context, path string) (string, error) {
 	return "", nil
 }
 
@@ -22,32 +25,34 @@ func NewImageUploader() (ImageUploader, error) {
 
 	switch setting.ImageUploadProvider {
 	case "s3":
-		s3sec, err := setting.Cfg.GetSection("external_image_storage.s3")
+		s3sec, err := setting.Raw.GetSection("external_image_storage.s3")
 		if err != nil {
 			return nil, err
 		}
 
-		bucket := s3sec.Key("bucket_url").MustString("")
+		bucket := s3sec.Key("bucket").MustString("")
+		region := s3sec.Key("region").MustString("")
+		path := s3sec.Key("path").MustString("")
+		bucketUrl := s3sec.Key("bucket_url").MustString("")
 		accessKey := s3sec.Key("access_key").MustString("")
 		secretKey := s3sec.Key("secret_key").MustString("")
 
-		region := ""
-		rBucket := regexp.MustCompile(`https?:\/\/(.*)\.s3(-([^.]+))?\.amazonaws\.com\/?`)
-		matches := rBucket.FindStringSubmatch(bucket)
-		if len(matches) == 0 {
-			return nil, fmt.Errorf("Could not find bucket setting for image.uploader.s3")
-		} else {
-			bucket = matches[1]
-			if matches[3] != "" {
-				region = matches[3]
-			} else {
-				region = "us-east-1"
-			}
+		if path != "" && path[len(path)-1:] != "/" {
+			path += "/"
 		}
 
-		return NewS3Uploader(region, bucket, "public-read", accessKey, secretKey), nil
+		if bucket == "" || region == "" {
+			info, err := getRegionAndBucketFromUrl(bucketUrl)
+			if err != nil {
+				return nil, err
+			}
+			bucket = info.bucket
+			region = info.region
+		}
+
+		return NewS3Uploader(region, bucket, path, "public-read", accessKey, secretKey), nil
 	case "webdav":
-		webdavSec, err := setting.Cfg.GetSection("external_image_storage.webdav")
+		webdavSec, err := setting.Raw.GetSection("external_image_storage.webdav")
 		if err != nil {
 			return nil, err
 		}
@@ -57,11 +62,74 @@ func NewImageUploader() (ImageUploader, error) {
 			return nil, fmt.Errorf("Could not find url key for image.uploader.webdav")
 		}
 
+		public_url := webdavSec.Key("public_url").String()
 		username := webdavSec.Key("username").String()
 		password := webdavSec.Key("password").String()
 
-		return NewWebdavImageUploader(url, username, password)
+		return NewWebdavImageUploader(url, username, password, public_url)
+	case "gcs":
+		gcssec, err := setting.Raw.GetSection("external_image_storage.gcs")
+		if err != nil {
+			return nil, err
+		}
+
+		keyFile := gcssec.Key("key_file").MustString("")
+		bucketName := gcssec.Key("bucket").MustString("")
+		path := gcssec.Key("path").MustString("")
+
+		return NewGCSUploader(keyFile, bucketName, path), nil
+	case "azure_blob":
+		azureBlobSec, err := setting.Raw.GetSection("external_image_storage.azure_blob")
+		if err != nil {
+			return nil, err
+		}
+
+		account_name := azureBlobSec.Key("account_name").MustString("")
+		account_key := azureBlobSec.Key("account_key").MustString("")
+		container_name := azureBlobSec.Key("container_name").MustString("")
+
+		return NewAzureBlobUploader(account_name, account_key, container_name), nil
+	case "local":
+		return NewLocalImageUploader()
+	}
+
+	if setting.ImageUploadProvider != "" {
+		log.Error2("The external image storage configuration is invalid", "unsupported provider", setting.ImageUploadProvider)
 	}
 
 	return NopImageUploader{}, nil
+}
+
+type s3Info struct {
+	region string
+	bucket string
+}
+
+func getRegionAndBucketFromUrl(url string) (*s3Info, error) {
+	info := &s3Info{}
+	urlRegex := regexp.MustCompile(`https?:\/\/(.*)\.s3(-([^.]+))?\.amazonaws\.com\/?`)
+	matches := urlRegex.FindStringSubmatch(url)
+	if len(matches) > 0 {
+		info.bucket = matches[1]
+		if matches[3] != "" {
+			info.region = matches[3]
+		} else {
+			info.region = "us-east-1"
+		}
+		return info, nil
+	}
+
+	urlRegex2 := regexp.MustCompile(`https?:\/\/s3(-([^.]+))?\.amazonaws\.com\/(.*)?`)
+	matches2 := urlRegex2.FindStringSubmatch(url)
+	if len(matches2) > 0 {
+		info.bucket = matches2[3]
+		if matches2[2] != "" {
+			info.region = matches2[2]
+		} else {
+			info.region = "us-east-1"
+		}
+		return info, nil
+	}
+
+	return nil, fmt.Errorf("Could not find bucket setting for image.uploader.s3")
 }

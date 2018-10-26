@@ -8,14 +8,20 @@
   "annotations": true,
   "alerting": true,
 
+  "queryOptions": {
+    "minInterval": true
+  },
+
   "info": {
+    "description": "InfluxDB Data Source for Grafana",
     "author": {
       "name": "Grafana Project",
-      "url": "http://grafana.org"
+      "url": "https://grafana.com"
     },
     "logos": {
       "small": "img/influxdb_logo.svg",
       "large": "img/influxdb_logo.svg"
-    }
+    },
+    "version": "5.0.0"
   }
 }

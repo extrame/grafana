@@ -3,10 +3,11 @@ title = "Installation"
 description = "Install guide for Grafana"
 keywords = ["grafana", "installation", "documentation"]
 type = "docs"
-aliases = ["installation/installation/"]
+aliases = ["installation/installation/", "v2.1/installation/install/"]
 [menu.docs]
 name = "Installation"
 identifier = "installation"
+weight = 1
 +++
 
 ## Installing Grafana
@@ -17,6 +18,6 @@ identifier = "installation"
 - [Installing on Windows](windows)
 - [Installing on Docker](docker)
 - [Installing using Provisioning (Chef, Puppet, Salt, Ansible, etc)](provisioning)
-- [Nightly Builds](http://grafana.org/builds)
+- [Nightly Builds](https://grafana.com/grafana/download)
 
 

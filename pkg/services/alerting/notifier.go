@@ -4,12 +4,13 @@ import (
 	"errors"
 	"fmt"
 
-	"golang.org/x/sync/errgroup"
-
 	"github.com/grafana/grafana/pkg/bus"
 	"github.com/grafana/grafana/pkg/components/imguploader"
-	"github.com/grafana/grafana/pkg/components/renderer"
 	"github.com/grafana/grafana/pkg/log"
+	"github.com/grafana/grafana/pkg/metrics"
+	"github.com/grafana/grafana/pkg/services/rendering"
+	"github.com/grafana/grafana/pkg/setting"
+
 	m "github.com/grafana/grafana/pkg/models"
 )
 
@@ -22,54 +23,98 @@ type NotifierPlugin struct {
 }
 
 type NotificationService interface {
-	Send(context *EvalContext) error
+	SendIfNeeded(context *EvalContext) error
 }
 
-func NewNotificationService() NotificationService {
-	return newNotificationService()
-}
-
-type notificationService struct {
-	log log.Logger
-}
-
-func newNotificationService() *notificationService {
+func NewNotificationService(renderService rendering.Service) NotificationService {
 	return &notificationService{
-		log: log.New("alerting.notifier"),
+		log:           log.New("alerting.notifier"),
+		renderService: renderService,
 	}
 }
 
-func (n *notificationService) Send(context *EvalContext) error {
-	notifiers, err := n.getNotifiers(context.Rule.OrgId, context.Rule.Notifications, context)
+type notificationService struct {
+	log           log.Logger
+	renderService rendering.Service
+}
+
+func (n *notificationService) SendIfNeeded(context *EvalContext) error {
+	notifierStates, err := n.getNeededNotifiers(context.Rule.OrgId, context.Rule.Notifications, context)
 	if err != nil {
 		return err
 	}
 
-	n.log.Info("Sending notifications for", "ruleId", context.Rule.Id, "sent count", len(notifiers))
-
-	if len(notifiers) == 0 {
+	if len(notifierStates) == 0 {
 		return nil
 	}
 
-	if notifiers.ShouldUploadImage() {
+	if notifierStates.ShouldUploadImage() {
 		if err = n.uploadImage(context); err != nil {
 			n.log.Error("Failed to upload alert panel image.", "error", err)
 		}
 	}
 
-	return n.sendNotifications(context, notifiers)
+	return n.sendNotifications(context, notifierStates)
 }
 
-func (n *notificationService) sendNotifications(context *EvalContext, notifiers []Notifier) error {
-	g, _ := errgroup.WithContext(context.Ctx)
+func (n *notificationService) sendAndMarkAsComplete(evalContext *EvalContext, notifierState *notifierState) error {
+	notifier := notifierState.notifier
 
-	for _, notifier := range notifiers {
-		not := notifier //avoid updating scope variable in go routine
-		n.log.Info("Sending notification", "type", not.GetType(), "id", not.GetNotifierId(), "isDefault", not.GetIsDefault())
-		g.Go(func() error { return not.Notify(context) })
+	n.log.Debug("Sending notification", "type", notifier.GetType(), "id", notifier.GetNotifierId(), "isDefault", notifier.GetIsDefault())
+	metrics.M_Alerting_Notification_Sent.WithLabelValues(notifier.GetType()).Inc()
+
+	err := notifier.Notify(evalContext)
+
+	if err != nil {
+		n.log.Error("failed to send notification", "id", notifier.GetNotifierId(), "error", err)
 	}
 
-	return g.Wait()
+	if evalContext.IsTestRun {
+		return nil
+	}
+
+	cmd := &m.SetAlertNotificationStateToCompleteCommand{
+		Id:      notifierState.state.Id,
+		Version: notifierState.state.Version,
+	}
+
+	return bus.DispatchCtx(evalContext.Ctx, cmd)
+}
+
+func (n *notificationService) sendNotification(evalContext *EvalContext, notifierState *notifierState) error {
+	if !evalContext.IsTestRun {
+		setPendingCmd := &m.SetAlertNotificationStateToPendingCommand{
+			Id:                           notifierState.state.Id,
+			Version:                      notifierState.state.Version,
+			AlertRuleStateUpdatedVersion: evalContext.Rule.StateChanges,
+		}
+
+		err := bus.DispatchCtx(evalContext.Ctx, setPendingCmd)
+		if err == m.ErrAlertNotificationStateVersionConflict {
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+
+		// We need to update state version to be able to log
+		// unexpected version conflicts when marking notifications as ok
+		notifierState.state.Version = setPendingCmd.ResultVersion
+	}
+
+	return n.sendAndMarkAsComplete(evalContext, notifierState)
+}
+
+func (n *notificationService) sendNotifications(evalContext *EvalContext, notifierStates notifierStateSlice) error {
+	for _, notifierState := range notifierStates {
+		err := n.sendNotification(evalContext, notifierState)
+		if err != nil {
+			n.log.Error("failed to send notification", "id", notifierState.notifier.GetNotifierId(), "error", err)
+		}
+	}
+
+	return nil
 }
 
 func (n *notificationService) uploadImage(context *EvalContext) (err error) {
@@ -78,49 +123,72 @@ func (n *notificationService) uploadImage(context *EvalContext) (err error) {
 		return err
 	}
 
-	renderOpts := &renderer.RenderOpts{
-		Width:   "800",
-		Height:  "400",
-		Timeout: "30",
-		OrgId:   context.Rule.OrgId,
+	renderOpts := rendering.Opts{
+		Width:           1000,
+		Height:          500,
+		Timeout:         alertTimeout / 2,
+		OrgId:           context.Rule.OrgId,
+		OrgRole:         m.ROLE_ADMIN,
+		ConcurrentLimit: setting.AlertingRenderLimit,
 	}
 
-	if slug, err := context.GetDashboardSlug(); err != nil {
-		return err
-	} else {
-		renderOpts.Path = fmt.Sprintf("dashboard-solo/db/%s?&panelId=%d", slug, context.Rule.PanelId)
-	}
-
-	if imagePath, err := renderer.RenderToPng(renderOpts); err != nil {
-		return err
-	} else {
-		context.ImageOnDiskPath = imagePath
-	}
-
-	context.ImagePublicUrl, err = uploader.Upload(context.ImageOnDiskPath)
+	ref, err := context.GetDashboardUID()
 	if err != nil {
 		return err
 	}
 
-	n.log.Info("uploaded", "url", context.ImagePublicUrl)
+	renderOpts.Path = fmt.Sprintf("d-solo/%s/%s?panelId=%d", ref.Uid, ref.Slug, context.Rule.PanelId)
+
+	result, err := n.renderService.Render(context.Ctx, renderOpts)
+	if err != nil {
+		return err
+	}
+
+	context.ImageOnDiskPath = result.FilePath
+	context.ImagePublicUrl, err = uploader.Upload(context.Ctx, context.ImageOnDiskPath)
+	if err != nil {
+		return err
+	}
+
+	if context.ImagePublicUrl != "" {
+		n.log.Info("uploaded screenshot of alert to external image store", "url", context.ImagePublicUrl)
+	}
+
 	return nil
 }
 
-func (n *notificationService) getNotifiers(orgId int64, notificationIds []int64, context *EvalContext) (NotifierSlice, error) {
+func (n *notificationService) getNeededNotifiers(orgId int64, notificationIds []int64, evalContext *EvalContext) (notifierStateSlice, error) {
 	query := &m.GetAlertNotificationsToSendQuery{OrgId: orgId, Ids: notificationIds}
 
 	if err := bus.Dispatch(query); err != nil {
 		return nil, err
 	}
 
-	var result []Notifier
+	var result notifierStateSlice
 	for _, notification := range query.Result {
-		if not, err := n.createNotifierFor(notification); err != nil {
-			return nil, err
-		} else {
-			if shouldUseNotification(not, context) {
-				result = append(result, not)
-			}
+		not, err := n.createNotifierFor(notification)
+		if err != nil {
+			n.log.Error("Could not create notifier", "notifier", notification.Id, "error", err)
+			continue
+		}
+
+		query := &m.GetOrCreateNotificationStateQuery{
+			NotifierId: notification.Id,
+			AlertId:    evalContext.Rule.Id,
+			OrgId:      evalContext.Rule.OrgId,
+		}
+
+		err = bus.DispatchCtx(evalContext.Ctx, query)
+		if err != nil {
+			n.log.Error("Could not get notification state.", "notifier", notification.Id, "error", err)
+			continue
+		}
+
+		if not.ShouldNotify(evalContext.Ctx, evalContext, query.Result) {
+			result = append(result, &notifierState{
+				notifier: not,
+				state:    query.Result,
+			})
 		}
 	}
 
@@ -136,21 +204,9 @@ func (n *notificationService) createNotifierFor(model *m.AlertNotification) (Not
 	return notifierPlugin.Factory(model)
 }
 
-func shouldUseNotification(notifier Notifier, context *EvalContext) bool {
-	if !context.Firing {
-		return true
-	}
-
-	if context.Error != nil {
-		return true
-	}
-
-	return notifier.PassesFilter(context.Rule)
-}
-
 type NotifierFactory func(notification *m.AlertNotification) (Notifier, error)
 
-var notifierFactories map[string]*NotifierPlugin = make(map[string]*NotifierPlugin)
+var notifierFactories = make(map[string]*NotifierPlugin)
 
 func RegisterNotifier(plugin *NotifierPlugin) {
 	notifierFactories[plugin.Type] = plugin

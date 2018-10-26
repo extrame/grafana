@@ -5,14 +5,13 @@ import (
 
 	"github.com/grafana/grafana/pkg/bus"
 	"github.com/grafana/grafana/pkg/log"
-	"github.com/grafana/grafana/pkg/middleware"
 	m "github.com/grafana/grafana/pkg/models"
 	"github.com/grafana/grafana/pkg/plugins"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/util"
 )
 
-func getFrontendSettingsMap(c *middleware.Context) (map[string]interface{}, error) {
+func (hs *HTTPServer) getFrontendSettingsMap(c *m.ReqContext) (map[string]interface{}, error) {
 	orgDataSources := make([]*m.DataSource, 0)
 
 	if c.OrgId != 0 {
@@ -23,7 +22,20 @@ func getFrontendSettingsMap(c *middleware.Context) (map[string]interface{}, erro
 			return nil, err
 		}
 
-		orgDataSources = query.Result
+		dsFilterQuery := m.DatasourcesPermissionFilterQuery{
+			User:        c.SignedInUser,
+			Datasources: query.Result,
+		}
+
+		if err := bus.Dispatch(&dsFilterQuery); err != nil {
+			if err != bus.ErrHandlerNotFound {
+				return nil, err
+			}
+
+			orgDataSources = query.Result
+		} else {
+			orgDataSources = dsFilterQuery.Result
+		}
 	}
 
 	datasources := make(map[string]interface{})
@@ -42,6 +54,7 @@ func getFrontendSettingsMap(c *middleware.Context) (map[string]interface{}, erro
 		}
 
 		var dsMap = map[string]interface{}{
+			"id":   ds.Id,
 			"type": ds.Type,
 			"name": ds.Name,
 			"url":  url,
@@ -61,6 +74,8 @@ func getFrontendSettingsMap(c *middleware.Context) (map[string]interface{}, erro
 
 		if ds.JsonData != nil {
 			dsMap["jsonData"] = ds.JsonData
+		} else {
+			dsMap["jsonData"] = make(map[string]string)
 		}
 
 		if ds.Access == m.DS_ACCESS_DIRECT {
@@ -101,18 +116,15 @@ func getFrontendSettingsMap(c *middleware.Context) (map[string]interface{}, erro
 		datasources[ds.Name] = dsMap
 	}
 
-	// add grafana backend data source
-	grafanaDatasourceMeta, _ := plugins.DataSources["grafana"]
-	datasources["-- Grafana --"] = map[string]interface{}{
-		"type": "grafana",
-		"name": "-- Grafana --",
-		"meta": grafanaDatasourceMeta,
-	}
-
-	// add mixed backend data source
-	datasources["-- Mixed --"] = map[string]interface{}{
-		"type": "mixed",
-		"meta": plugins.DataSources["mixed"],
+	// add datasources that are built in (meaning they are not added via data sources page, nor have any entry in datasource table)
+	for _, ds := range plugins.DataSources {
+		if ds.BuiltIn {
+			datasources[ds.Name] = map[string]interface{}{
+				"type": ds.Type,
+				"name": ds.Name,
+				"meta": plugins.DataSources[ds.Id],
+			}
+		}
 	}
 
 	if defaultDatasource == "" {
@@ -121,6 +133,10 @@ func getFrontendSettingsMap(c *middleware.Context) (map[string]interface{}, erro
 
 	panels := map[string]interface{}{}
 	for _, panel := range enabledPlugins.Panels {
+		if panel.State == "alpha" && !hs.Cfg.EnableAlphaPanels {
+			continue
+		}
+
 		panels[panel.Id] = map[string]interface{}{
 			"module":       panel.Module,
 			"baseUrl":      panel.BaseUrl,
@@ -133,15 +149,22 @@ func getFrontendSettingsMap(c *middleware.Context) (map[string]interface{}, erro
 	}
 
 	jsonObj := map[string]interface{}{
-		"defaultDatasource": defaultDatasource,
-		"datasources":       datasources,
-		"panels":            panels,
-		"appSubUrl":         setting.AppSubUrl,
-		"allowOrgCreate":    (setting.AllowUserOrgCreate && c.IsSignedIn) || c.IsGrafanaAdmin,
-		"authProxyEnabled":  setting.AuthProxyEnabled,
-		"ldapEnabled":       setting.LdapEnabled,
-		"alertingEnabled":   setting.AlertingEnabled,
-		"googleAnalyticsId": setting.GoogleAnalyticsId,
+		"defaultDatasource":          defaultDatasource,
+		"datasources":                datasources,
+		"panels":                     panels,
+		"appSubUrl":                  setting.AppSubUrl,
+		"allowOrgCreate":             (setting.AllowUserOrgCreate && c.IsSignedIn) || c.IsGrafanaAdmin,
+		"authProxyEnabled":           setting.AuthProxyEnabled,
+		"ldapEnabled":                setting.LdapEnabled,
+		"alertingEnabled":            setting.AlertingEnabled,
+		"alertingErrorOrTimeout":     setting.AlertingErrorOrTimeout,
+		"alertingNoDataOrNullValues": setting.AlertingNoDataOrNullValues,
+		"exploreEnabled":             setting.ExploreEnabled,
+		"googleAnalyticsId":          setting.GoogleAnalyticsId,
+		"disableLoginForm":           setting.DisableLoginForm,
+		"externalUserMngInfo":        setting.ExternalUserMngInfo,
+		"externalUserMngLinkUrl":     setting.ExternalUserMngLinkUrl,
+		"externalUserMngLinkName":    setting.ExternalUserMngLinkName,
 		"buildInfo": map[string]interface{}{
 			"version":       setting.BuildVersion,
 			"commit":        setting.BuildCommit,
@@ -149,6 +172,7 @@ func getFrontendSettingsMap(c *middleware.Context) (map[string]interface{}, erro
 			"latestVersion": plugins.GrafanaLatestVersion,
 			"hasUpdate":     plugins.GrafanaHasUpdate,
 			"env":           setting.Env,
+			"isEnterprise":  setting.IsEnterprise,
 		},
 	}
 
@@ -166,16 +190,18 @@ func getPanelSort(id string) int {
 		sort = 3
 	case "text":
 		sort = 4
-	case "alertlist":
+	case "heatmap":
 		sort = 5
-	case "dashlist":
+	case "alertlist":
 		sort = 6
+	case "dashlist":
+		sort = 7
 	}
 	return sort
 }
 
-func GetFrontendSettings(c *middleware.Context) {
-	settings, err := getFrontendSettingsMap(c)
+func (hs *HTTPServer) GetFrontendSettings(c *m.ReqContext) {
+	settings, err := hs.getFrontendSettingsMap(c)
 	if err != nil {
 		c.JsonApiErr(400, "Failed to get frontend settings", err)
 		return

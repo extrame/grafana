@@ -33,7 +33,7 @@ func validateInput(c CommandLine, pluginFolder string) error {
 	fileInfo, err := os.Stat(pluginsDir)
 	if err != nil {
 		if err = os.MkdirAll(pluginsDir, os.ModePerm); err != nil {
-			return errors.New(fmt.Sprintf("pluginsDir (%s) is not a directory", pluginsDir))
+			return fmt.Errorf("pluginsDir (%s) is not a writable directory", pluginsDir)
 		}
 		return nil
 	}
@@ -58,41 +58,43 @@ func installCommand(c CommandLine) error {
 }
 
 func InstallPlugin(pluginName, version string, c CommandLine) error {
-	plugin, err := s.GetPlugin(pluginName, c.RepoDirectory())
 	pluginFolder := c.PluginDirectory()
-	if err != nil {
-		return err
+	downloadURL := c.PluginURL()
+	if downloadURL == "" {
+		plugin, err := s.GetPlugin(pluginName, c.RepoDirectory())
+		if err != nil {
+			return err
+		}
+
+		v, err := SelectVersion(plugin, version)
+		if err != nil {
+			return err
+		}
+
+		if version == "" {
+			version = v.Version
+		}
+		downloadURL = fmt.Sprintf("%s/%s/versions/%s/download",
+			c.GlobalString("repo"),
+			pluginName,
+			version)
 	}
 
-	v, err := SelectVersion(plugin, version)
-	if err != nil {
-		return err
-	}
-
-	if version == "" {
-		version = v.Version
-	}
-
-	downloadURL := fmt.Sprintf("%s/%s/versions/%s/download",
-		c.GlobalString("repo"),
-		pluginName,
-		version)
-
-	logger.Infof("installing %v @ %v\n", plugin.Id, version)
+	logger.Infof("installing %v @ %v\n", pluginName, version)
 	logger.Infof("from url: %v\n", downloadURL)
 	logger.Infof("into: %v\n", pluginFolder)
 	logger.Info("\n")
 
-	err = downloadFile(plugin.Id, pluginFolder, downloadURL)
+	err := downloadFile(pluginName, pluginFolder, downloadURL)
 	if err != nil {
 		return err
 	}
 
-	logger.Infof("%s Installed %s successfully \n", color.GreenString("✔"), plugin.Id)
+	logger.Infof("%s Installed %s successfully \n", color.GreenString("✔"), pluginName)
 
 	res, _ := s.ReadPlugin(pluginFolder, pluginName)
 	for _, v := range res.Dependencies.Plugins {
-		InstallPlugin(v.Id, version, c)
+		InstallPlugin(v.Id, "", c)
 		logger.Infof("Installed dependency: %v ✔\n", v.Id)
 	}
 
@@ -110,7 +112,7 @@ func SelectVersion(plugin m.Plugin, version string) (m.Version, error) {
 		}
 	}
 
-	return m.Version{}, errors.New("Could not find the version your looking for")
+	return m.Version{}, errors.New("Could not find the version you're looking for")
 }
 
 func RemoveGitBuildFromName(pluginName, filename string) string {
@@ -150,7 +152,7 @@ func downloadFile(pluginName, filePath, url string) (err error) {
 		return err
 	}
 
-	r, err := zip.NewReader(bytes.NewReader(body), resp.ContentLength)
+	r, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
 	if err != nil {
 		return err
 	}

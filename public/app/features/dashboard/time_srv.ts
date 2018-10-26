@@ -1,28 +1,38 @@
-///<reference path="../../headers/common.d.ts" />
-
-import config from 'app/core/config';
-import angular from 'angular';
+// Libraries
 import moment from 'moment';
 import _ from 'lodash';
-import coreModule from 'app/core/core_module';
-import kbn from 'app/core/utils/kbn';
-import * as dateMath from 'app/core/utils/datemath';
 
-class TimeSrv {
+// Utils
+import kbn from 'app/core/utils/kbn';
+import coreModule from 'app/core/core_module';
+import * as dateMath from 'app/core/utils/datemath';
+// Types
+
+import { TimeRange } from 'app/types';
+
+export class TimeSrv {
   time: any;
   refreshTimer: any;
   refresh: boolean;
   oldRefresh: boolean;
   dashboard: any;
   timeAtLoad: any;
+  private autoRefreshBlocked: boolean;
 
-  /** @ngInject **/
+  /** @ngInject */
   constructor(private $rootScope, private $timeout, private $location, private timer, private contextSrv) {
     // default time
-    this.time = {from: '6h', to: 'now'};
+    this.time = { from: '6h', to: 'now' };
 
     $rootScope.$on('zoom-out', this.zoomOut.bind(this));
     $rootScope.$on('$routeUpdate', this.routeUpdated.bind(this));
+
+    document.addEventListener('visibilitychange', () => {
+      if (this.autoRefreshBlocked && document.visibilityState === 'visible') {
+        this.autoRefreshBlocked = false;
+        this.refreshDashboard();
+      }
+    });
   }
 
   init(dashboard) {
@@ -51,7 +61,7 @@ class TimeSrv {
     if (_.isString(this.time.to) && this.time.to.indexOf('Z') >= 0) {
       this.time.to = moment(this.time.to).utc();
     }
-  };
+  }
 
   private parseUrlParam(value) {
     if (value.indexOf('now') !== -1) {
@@ -65,7 +75,7 @@ class TimeSrv {
     }
 
     if (!isNaN(value)) {
-      var epoch = parseInt(value);
+      const epoch = parseInt(value, 10);
       return moment.utc(epoch);
     }
 
@@ -73,21 +83,27 @@ class TimeSrv {
   }
 
   private initTimeFromUrl() {
-    var params = this.$location.search();
+    const params = this.$location.search();
     if (params.from) {
       this.time.from = this.parseUrlParam(params.from) || this.time.from;
     }
     if (params.to) {
       this.time.to = this.parseUrlParam(params.to) || this.time.to;
     }
+    // if absolute ignore refresh option saved to dashboard
+    if (params.to && params.to.indexOf('now') === -1) {
+      this.refresh = false;
+      this.dashboard.refresh = false;
+    }
+    // but if refresh explicitly set then use that
     if (params.refresh) {
       this.refresh = params.refresh || this.refresh;
     }
-  };
+  }
 
   private routeUpdated() {
-    var params = this.$location.search();
-    var urlRange = this.timeRangeForUrl();
+    const params = this.$location.search();
+    const urlRange = this.timeRangeForUrl();
     // check if url has time range
     if (params.from && params.to) {
       // is it different from what our current time range?
@@ -102,48 +118,55 @@ class TimeSrv {
   }
 
   private timeHasChangedSinceLoad() {
-    return this.timeAtLoad.from !== this.time.from || this.timeAtLoad.to !== this.time.to;
+    return this.timeAtLoad && (this.timeAtLoad.from !== this.time.from || this.timeAtLoad.to !== this.time.to);
   }
 
   setAutoRefresh(interval) {
     this.dashboard.refresh = interval;
+    this.cancelNextRefresh();
     if (interval) {
-      var intervalMs = kbn.interval_to_ms(interval);
+      const intervalMs = kbn.interval_to_ms(interval);
 
-      this.$timeout(() => {
-        this.startNextRefreshTimer(intervalMs);
-        this.refreshDashboard();
-      }, intervalMs);
-
-    } else {
-      this.cancelNextRefresh();
+      this.refreshTimer = this.timer.register(
+        this.$timeout(() => {
+          this.startNextRefreshTimer(intervalMs);
+          this.refreshDashboard();
+        }, intervalMs)
+      );
     }
 
     // update url
+    const params = this.$location.search();
     if (interval) {
-      var params = this.$location.search();
       params.refresh = interval;
+      this.$location.search(params);
+    } else if (params.refresh) {
+      delete params.refresh;
       this.$location.search(params);
     }
   }
 
   refreshDashboard() {
-    this.$rootScope.$broadcast('refresh');
+    this.dashboard.timeRangeUpdated();
   }
 
   private startNextRefreshTimer(afterMs) {
     this.cancelNextRefresh();
-    this.refreshTimer = this.timer.register(this.$timeout(() => {
-      this.startNextRefreshTimer(afterMs);
-      if (this.contextSrv.isGrafanaVisible()) {
-        this.refreshDashboard();
-      }
-    }, afterMs));
+    this.refreshTimer = this.timer.register(
+      this.$timeout(() => {
+        this.startNextRefreshTimer(afterMs);
+        if (this.contextSrv.isGrafanaVisible()) {
+          this.refreshDashboard();
+        } else {
+          this.autoRefreshBlocked = true;
+        }
+      }, afterMs)
+    );
   }
 
   private cancelNextRefresh() {
     this.timer.cancel(this.refreshTimer);
-  };
+  }
 
   setTime(time, fromRouteUpdate?) {
     _.extend(this.time, time);
@@ -159,8 +182,8 @@ class TimeSrv {
 
     // update url
     if (fromRouteUpdate !== true) {
-      var urlRange = this.timeRangeForUrl();
-      var urlParams = this.$location.search();
+      const urlRange = this.timeRangeForUrl();
+      const urlParams = this.$location.search();
       urlParams.from = urlRange.from;
       urlParams.to = urlRange.to;
       this.$location.search(urlParams);
@@ -171,45 +194,55 @@ class TimeSrv {
   }
 
   timeRangeForUrl() {
-    var range = this.timeRange().raw;
+    const range = this.timeRange().raw;
 
-    if (moment.isMoment(range.from)) { range.from = range.from.valueOf(); }
-    if (moment.isMoment(range.to)) { range.to = range.to.valueOf(); }
+    if (moment.isMoment(range.from)) {
+      range.from = range.from.valueOf().toString();
+    }
+    if (moment.isMoment(range.to)) {
+      range.to = range.to.valueOf().toString();
+    }
 
     return range;
   }
 
-  timeRange() {
+  timeRange(): TimeRange {
     // make copies if they are moment  (do not want to return out internal moment, because they are mutable!)
-    var raw = {
+    const raw = {
       from: moment.isMoment(this.time.from) ? moment(this.time.from) : this.time.from,
       to: moment.isMoment(this.time.to) ? moment(this.time.to) : this.time.to,
     };
 
+    const timezone = this.dashboard && this.dashboard.getTimezone();
+
     return {
-      from: dateMath.parse(raw.from, false),
-      to: dateMath.parse(raw.to, true),
-      raw: raw
+      from: dateMath.parse(raw.from, false, timezone),
+      to: dateMath.parse(raw.to, true, timezone),
+      raw: raw,
     };
   }
 
   zoomOut(e, factor) {
-    var range = this.timeRange();
+    const range = this.timeRange();
 
-    var timespan = (range.to.valueOf() - range.from.valueOf());
-    var center = range.to.valueOf() - timespan/2;
+    const timespan = range.to.valueOf() - range.from.valueOf();
+    const center = range.to.valueOf() - timespan / 2;
 
-    var to = (center + (timespan*factor)/2);
-    var from = (center - (timespan*factor)/2);
+    const to = center + timespan * factor / 2;
+    const from = center - timespan * factor / 2;
 
-    if (to > Date.now() && range.to <= Date.now()) {
-      var offset = to - Date.now();
-      from = from - offset;
-      to = Date.now();
-    }
-
-    this.setTime({from: moment.utc(from), to: moment.utc(to)});
+    this.setTime({ from: moment.utc(from), to: moment.utc(to) });
   }
+}
+
+let singleton;
+
+export function setTimeSrv(srv: TimeSrv) {
+  singleton = srv;
+}
+
+export function getTimeSrv(): TimeSrv {
+  return singleton;
 }
 
 coreModule.service('timeSrv', TimeSrv);
